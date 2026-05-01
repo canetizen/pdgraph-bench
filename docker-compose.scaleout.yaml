@@ -1,0 +1,27 @@
+# Created by: Mustafa Can Caliskan
+# Date: 2026-04-25
+#
+# Scale-out compose for the local playground: brings up the reserve NebulaGraph
+# storaged instance (logical "node5", port 9782) on the host network. Used by
+# the scale-out provisioner during scenario S5 — `docker compose -f
+# docker-compose.scaleout.yaml up -d` runs at t=300 s into the measurement
+# window, after which the harness issues `ADD HOSTS "127.0.0.1":9782` to
+# register the new instance with the running cluster.
+
+name: pdgraph-bench-scaleout
+
+services:
+  storaged-reserve:
+    image: vesoft/nebula-storaged:v3.8.0
+    container_name: gb-storaged-reserve
+    network_mode: host
+    command:
+      - --meta_server_addrs=127.0.0.1:9559,127.0.0.1:9569,127.0.0.1:9579
+      - --local_ip=127.0.0.1
+      - --port=9809
+      - --ws_ip=127.0.0.1
+      - --ws_http_port=19809
+      - --data_path=/data/storage
+      - --log_dir=/logs
+      - --v=0
+    restart: on-failure

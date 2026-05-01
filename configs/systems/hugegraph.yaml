@@ -1,0 +1,18 @@
+# Created by: Mustafa Can Caliskan
+# Date: 2026-04-25
+#
+# Production HugeGraph endpoint. `host` is the HugeGraph server-bearing SUT node
+# from configs/inventory/cluster.yaml. Cassandra storage backend is shared with
+# JanusGraph through a distinct keyspace; Tier-2 runs are scheduled in
+# non-overlapping windows.
+
+name: hugegraph
+image: hugegraph/hugegraph:1.3.0
+endpoints:
+  - host: node2
+    port: 8080
+options:
+  host: node2
+  port: 8080
+  graph: hugegraph
+  timeout_s: 30.0

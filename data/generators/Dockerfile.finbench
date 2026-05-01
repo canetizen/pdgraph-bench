@@ -1,0 +1,51 @@
+# Created by: Mustafa Can Caliskan
+# Date: 2026-04-25
+
+# LDBC FinBench Datagen has no official Docker image (only sources on GitHub).
+# This multi-stage Dockerfile clones the upstream repo at a pinned commit,
+# builds a shaded jar with Maven, and packages it on top of a Spark image.
+#
+# Build:
+#   docker build -t graph-bench/finbench-datagen:0.1.0 -f Dockerfile.finbench .
+#
+# Run:
+#   docker run --rm -v "$(pwd)/out:/work" graph-bench/finbench-datagen:0.1.0 \
+#       --scale-factor 0.003 --output-dir /work
+#
+# Output schema follows the FinBench-defined CSV layout (Account.csv,
+# AccountTransferAccount.csv, etc.) flat under <output-dir>/snapshot/. The
+# loader (data/loaders/ldbc_finbench_*.py) reads from that directory.
+
+# ---------- stage 1: build the shaded jar ----------
+FROM maven:3.9-eclipse-temurin-11 AS builder
+
+ARG FINBENCH_REF=0.1.0
+
+WORKDIR /src
+RUN apt-get update && apt-get install -y --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/* \
+    && git clone --depth 1 --branch ${FINBENCH_REF} \
+       https://github.com/ldbc/ldbc_finbench_datagen.git \
+    && cd ldbc_finbench_datagen \
+    && mvn -B -q -DskipTests package
+
+# ---------- stage 2: runtime spark image ----------
+FROM apache/spark:3.5.1-java17-python3 AS runtime
+
+USER root
+WORKDIR /app
+
+# The build emits target/ldbc-finbench-datagen-<ver>-jar-with-dependencies.jar.
+# Copy whichever single jar lands.
+COPY --from=builder \
+    /src/ldbc_finbench_datagen/target/*-jar-with-dependencies.jar \
+    /app/datagen.jar
+
+ENV SPARK_LOCAL_DIRS=/tmp/spark
+ENV HOME=/tmp
+
+ENTRYPOINT ["/opt/spark/bin/spark-submit", \
+            "--master", "local[*]", \
+            "--driver-memory", "4g", \
+            "--class", "ldbc.finbench.datagen.LdbcDatagen", \
+            "/app/datagen.jar"]

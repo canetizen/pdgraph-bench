@@ -1,0 +1,32 @@
+# Created by: Mustafa Can Caliskan
+# Date: 2026-04-25
+
+id: s5
+name: Mixed + scale-out
+workload: snb_iv2
+dataset: snb_iv2_sf1
+system: nebulagraph
+worker_count: 16
+warmup_seconds: 300
+measurement_seconds: 1200           # 20 minutes for S5 per Progress Report
+query_timeout_seconds: 60
+repetitions: 3
+mix:
+  IS1: 10.0
+  IS2: 10.0
+  IS3: 10.0
+  IS4: 10.0
+  IS5: 10.0
+  IS6: 10.0
+  IS7: 10.0
+  IC1: 5.0
+  IC3: 5.0
+  IC5: 5.0
+  IC6: 5.0
+  IU1: 3.33
+  IU2: 3.33
+  IU6: 3.34
+scale_out:
+  at_offset_seconds: 300            # 5 min into measurement
+  target_node: node5
+  role: storaged                    # overridden per-system (dbserver/alpha/...)

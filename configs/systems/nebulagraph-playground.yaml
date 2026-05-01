@@ -1,0 +1,21 @@
+# Created by: Mustafa Can Caliskan
+# Date: 2026-04-25
+#
+# Playground NebulaGraph endpoint, host network mode. graphd-a binds 9669 on
+# the host loopback. The benchmark client (gb-node1) is also in host network
+# so it just dials 127.0.0.1:9669.
+
+name: nebulagraph
+image: vesoft/nebula-graphd:v3.8.0
+endpoints:
+  - host: 127.0.0.1
+    port: 9669
+options:
+  host: 127.0.0.1
+  port: 9669
+  user: root
+  password: nebula
+  space: snb_smoke
+  meta_host: 127.0.0.1
+  meta_port: 9559
+  pool_size: 16

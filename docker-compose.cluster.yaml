@@ -1,0 +1,257 @@
+# Created by: Mustafa Can Caliskan
+# Date: 2026-04-25
+#
+# Local single-host playground simulation of the production three-node SUT
+# cluster. All containers run in host network mode (matching the production
+# deployer's network model). Per-instance services are differentiated by port
+# offsets — service port + 1 is reserved by NebulaGraph for the Raft
+# transport, so the offset between sibling instances is 10 to avoid
+# raft-port-on-instance-X colliding with service-port-on-instance-Y.
+#
+#   logical "node2" (a): metad 9559 (raft 9560), storaged 9779 (raft 9780), graphd 9669
+#   logical "node3" (b): metad 9569 (raft 9570), storaged 9789 (raft 9790), graphd 9679
+#   logical "node4" (c): metad 9579 (raft 9580), storaged 9799 (raft 9800), graphd 9689
+#
+# Reserve storaged (logical "node5", port 9809) is NOT brought up here; the
+# scale-out provisioner starts it from docker-compose.scaleout.yaml at the S5
+# trigger. That keeps the playground semantics aligned with production: node5
+# is dormant until the scale-out event fires.
+
+name: pdgraph-bench-cluster
+
+x-meta-addrs: &meta_addrs "127.0.0.1:9559,127.0.0.1:9569,127.0.0.1:9579"
+
+services:
+
+  # ---- node2 (a) ------------------------------------------------------------
+  metad-a:
+    image: vesoft/nebula-metad:v3.8.0
+    container_name: gb-metad-a
+    network_mode: host
+    command:
+      - --meta_server_addrs=127.0.0.1:9559,127.0.0.1:9569,127.0.0.1:9579
+      - --local_ip=127.0.0.1
+      - --port=9559
+      - --ws_ip=127.0.0.1
+      - --ws_http_port=19559
+      - --data_path=/data/meta
+      - --log_dir=/logs
+    volumes:
+      - meta_data:/data/meta
+      - --v=0
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:19559/status"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 20s
+    restart: on-failure
+
+  storaged-a:
+    image: vesoft/nebula-storaged:v3.8.0
+    container_name: gb-storaged-a
+    network_mode: host
+    command:
+      - --meta_server_addrs=127.0.0.1:9559,127.0.0.1:9569,127.0.0.1:9579
+      - --local_ip=127.0.0.1
+      - --port=9779
+      - --ws_ip=127.0.0.1
+      - --ws_http_port=19779
+      - --data_path=/data/storage
+      - --log_dir=/logs
+      - --v=0
+    depends_on:
+      metad-a: { condition: service_healthy }
+      metad-b: { condition: service_healthy }
+      metad-c: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:19779/status"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 20s
+    restart: on-failure
+
+  graphd-a:
+    image: vesoft/nebula-graphd:v3.8.0
+    container_name: gb-graphd-a
+    network_mode: host
+    command:
+      - --meta_server_addrs=127.0.0.1:9559,127.0.0.1:9569,127.0.0.1:9579
+      - --local_ip=127.0.0.1
+      - --port=9669
+      - --ws_ip=127.0.0.1
+      - --ws_http_port=19669
+      - --log_dir=/logs
+      - --v=0
+    depends_on:
+      metad-a: { condition: service_healthy }
+      metad-b: { condition: service_healthy }
+      metad-c: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:19669/status"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 20s
+    restart: on-failure
+
+  # ---- node3 (b) ------------------------------------------------------------
+  metad-b:
+    image: vesoft/nebula-metad:v3.8.0
+    container_name: gb-metad-b
+    network_mode: host
+    command:
+      - --meta_server_addrs=127.0.0.1:9559,127.0.0.1:9569,127.0.0.1:9579
+      - --local_ip=127.0.0.1
+      - --port=9569
+      - --ws_ip=127.0.0.1
+      - --ws_http_port=19569
+      - --data_path=/data/meta
+      - --log_dir=/logs
+    volumes:
+      - meta_data:/data/meta
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:19569/status"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 20s
+    restart: on-failure
+
+  storaged-b:
+    image: vesoft/nebula-storaged:v3.8.0
+    container_name: gb-storaged-b
+    network_mode: host
+    command:
+      - --meta_server_addrs=127.0.0.1:9559,127.0.0.1:9569,127.0.0.1:9579
+      - --local_ip=127.0.0.1
+      - --port=9789
+      - --ws_ip=127.0.0.1
+      - --ws_http_port=19789
+      - --data_path=/data/storage
+      - --log_dir=/logs
+    depends_on:
+      metad-a: { condition: service_healthy }
+      metad-b: { condition: service_healthy }
+      metad-c: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:19789/status"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 20s
+    restart: on-failure
+
+  graphd-b:
+    image: vesoft/nebula-graphd:v3.8.0
+    container_name: gb-graphd-b
+    network_mode: host
+    command:
+      - --meta_server_addrs=127.0.0.1:9559,127.0.0.1:9569,127.0.0.1:9579
+      - --local_ip=127.0.0.1
+      - --port=9679
+      - --ws_ip=127.0.0.1
+      - --ws_http_port=19679
+      - --log_dir=/logs
+    depends_on:
+      metad-a: { condition: service_healthy }
+      metad-b: { condition: service_healthy }
+      metad-c: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:19679/status"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 20s
+    restart: on-failure
+
+  # ---- node4 (c) ------------------------------------------------------------
+  metad-c:
+    image: vesoft/nebula-metad:v3.8.0
+    container_name: gb-metad-c
+    network_mode: host
+    command:
+      - --meta_server_addrs=127.0.0.1:9559,127.0.0.1:9569,127.0.0.1:9579
+      - --local_ip=127.0.0.1
+      - --port=9579
+      - --ws_ip=127.0.0.1
+      - --ws_http_port=19579
+      - --data_path=/data/meta
+      - --log_dir=/logs
+    volumes:
+      - meta_data:/data/meta
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:19579/status"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 20s
+    restart: on-failure
+
+  storaged-c:
+    image: vesoft/nebula-storaged:v3.8.0
+    container_name: gb-storaged-c
+    network_mode: host
+    command:
+      - --meta_server_addrs=127.0.0.1:9559,127.0.0.1:9569,127.0.0.1:9579
+      - --local_ip=127.0.0.1
+      - --port=9799
+      - --ws_ip=127.0.0.1
+      - --ws_http_port=19799
+      - --data_path=/data/storage
+      - --log_dir=/logs
+    depends_on:
+      metad-a: { condition: service_healthy }
+      metad-b: { condition: service_healthy }
+      metad-c: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:19799/status"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 20s
+    restart: on-failure
+
+  graphd-c:
+    image: vesoft/nebula-graphd:v3.8.0
+    container_name: gb-graphd-c
+    network_mode: host
+    command:
+      - --meta_server_addrs=127.0.0.1:9559,127.0.0.1:9569,127.0.0.1:9579
+      - --local_ip=127.0.0.1
+      - --port=9689
+      - --ws_ip=127.0.0.1
+      - --ws_http_port=19689
+      - --log_dir=/logs
+    depends_on:
+      metad-a: { condition: service_healthy }
+      metad-b: { condition: service_healthy }
+      metad-c: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:19689/status"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 20s
+    restart: on-failure
+
+  # ---- node1 (benchmark client / orchestrator) ------------------------------
+  node1:
+    build:
+      context: .
+      dockerfile: Dockerfile.cluster
+    image: pdgraph-bench:cluster
+    container_name: gb-node1
+    network_mode: host
+    working_dir: /app
+    volumes:
+      - ./results:/app/results
+      - ./data/generated:/app/data/generated
+      - /var/run/docker.sock:/var/run/docker.sock      # so the scale-out provisioner can docker compose
+      - .:/app                                         # live source for development
+    depends_on:
+      graphd-a: { condition: service_healthy }
+      graphd-b: { condition: service_healthy }
+      graphd-c: { condition: service_healthy }
+    command: ["sleep", "infinity"]

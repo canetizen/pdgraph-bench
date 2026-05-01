@@ -1,0 +1,17 @@
+# Created by: Mustafa Can Caliskan
+# Date: 2026-04-25
+#
+# Production JanusGraph endpoint. `host` is the JanusGraph server-bearing SUT
+# node from configs/inventory/cluster.yaml. Cassandra storage backend is
+# provisioned as part of the JanusGraph compose bundle (one Cassandra peer per
+# SUT node).
+
+name: janusgraph
+image: janusgraph/janusgraph:1.0.0
+endpoints:
+  - host: node2
+    port: 8182
+options:
+  host: node2
+  port: 8182
+  traversal_source: g

@@ -1,0 +1,20 @@
+# Created by: Mustafa Can Caliskan
+# Date: 2026-04-25
+#
+# NebulaGraph endpoint as exposed inside the docker-compose cluster network.
+# `host=graphd0` resolves to the graphd container running on logical node2.
+
+name: nebulagraph
+image: vesoft/nebula-graphd:v3.8.0
+endpoints:
+  - host: graphd0
+    port: 9669
+options:
+  host: graphd0
+  port: 9669
+  user: root
+  password: nebula
+  space: snb_demo
+  meta_host: metad0
+  meta_port: 9559
+  pool_size: 32

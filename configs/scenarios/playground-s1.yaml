@@ -1,0 +1,29 @@
+# Created by: Mustafa Can Caliskan
+# Date: 2026-04-25
+#
+# Playground variant of S1 (transactional-only). Same scenario shape as
+# configs/scenarios/s1.yaml; the durations are shrunk so a full per-SUT
+# repetition triple finishes in a few minutes against the local docker-compose
+# cluster. Production runs use s1.yaml.
+
+id: playground-s1
+name: Transactional-only (playground)
+workload: snb_iv2
+dataset: snb_iv2_sf0.003
+system: nebulagraph
+worker_count: 4
+warmup_seconds: 10
+measurement_seconds: 30
+query_timeout_seconds: 30
+repetitions: 1
+mix:
+  IS1: 1.0
+  IS2: 1.0
+  IS3: 1.0
+  IS4: 1.0
+  IS5: 1.0
+  IS6: 1.0
+  IS7: 1.0
+  IU1: 1.0
+  IU2: 1.0
+  IU6: 1.0

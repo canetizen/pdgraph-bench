@@ -1,0 +1,29 @@
+# Created by: Mustafa Can Caliskan
+# Date: 2026-04-25
+#
+# Playground inventory: maps logical node names to docker-compose service
+# hostnames inside the gb_net network. Used only for the local-host smoke run.
+
+cluster_name: ads-benchmark-playground
+
+nodes:
+  node1:
+    hostname: node1
+    ssh_user: root
+    roles: [client, orchestrator]
+  node2:
+    hostname: graphd0
+    ssh_user: root
+    roles: [sut]
+  node3:
+    hostname: graphd1
+    ssh_user: root
+    roles: [sut]
+  node4:
+    hostname: graphd2
+    ssh_user: root
+    roles: [sut]
+  storaged-reserve:
+    hostname: storaged-reserve
+    ssh_user: root
+    roles: [reserve]

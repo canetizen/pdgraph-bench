@@ -1,0 +1,16 @@
+# Created by: Mustafa Can Caliskan
+# Date: 2026-04-25
+#
+# Production Dgraph endpoint. `host` is an alpha-bearing SUT node and
+# `zero_host` is a zero-bearing SUT node from configs/inventory/cluster.yaml.
+
+name: dgraph
+image: dgraph/dgraph:v24.0.5
+endpoints:
+  - host: node2
+    port: 9080
+options:
+  host: node2
+  port: 9080
+  zero_host: node2
+  zero_port: 6080

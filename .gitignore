@@ -1,0 +1,57 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# uv / venv
+.venv/
+uv.lock
+
+# Testing & linting
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.ruff_cache/
+.mypy_cache/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Project documents — kept private; final paper released separately
+docs/
+
+# Claude / agent tooling
+.claude/
+CLAUDE.md
+SKILL.md
+.cursorrules
+.cursor/
+
+# Benchmark results — too large and runs are reproducible
+results/*
+!results/.gitkeep
+
+# Generated datasets — regenerate from datagen
+data/generated/
+data/staging/
+
+# Credentials
+*.pem
+*.key
+configs/inventory/cluster.yaml
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*~
+
+# OS
+.DS_Store
+Thumbs.db

@@ -1,0 +1,12 @@
+# Created by: Mustafa Can Caliskan
+# Date: 2026-04-25
+
+name: synthetic_snb
+queries:
+  - IS1
+  - IS2
+  - IS3
+  - IU1
+parameter_source: data/generated/synthetic_snb/parameters.json
+options:
+  parameter_source: /app/data/generated/synthetic_snb/parameters.json

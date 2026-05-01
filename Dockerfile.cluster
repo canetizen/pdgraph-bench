@@ -1,0 +1,47 @@
+# Created by: Mustafa Can Caliskan
+# Date: 2026-04-25
+
+# Image used by the simulated client node (gb-node1) and by the loader/validator
+# scripts. Contains the graph-bench Python package with all SUT client extras.
+
+FROM python:3.11-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+WORKDIR /app
+
+# OS deps:
+# - git/curl/ca-certificates/build-essential for Python wheel builds
+# - docker-cli + docker-compose-plugin so the scale-out provisioner can
+#   `docker compose up -d` the reserve container against the host's docker
+#   daemon (mounted via /var/run/docker.sock in docker-compose.cluster.yaml)
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+        git curl ca-certificates build-essential gnupg lsb-release \
+ && install -m 0755 -d /etc/apt/keyrings \
+ && curl -fsSL https://download.docker.com/linux/debian/gpg \
+      | gpg --dearmor -o /etc/apt/keyrings/docker.gpg \
+ && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
+         https://download.docker.com/linux/debian $(lsb_release -cs) stable" \
+      > /etc/apt/sources.list.d/docker.list \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends \
+        docker-ce-cli docker-compose-plugin \
+ && rm -rf /var/lib/apt/lists/*
+
+# Copy package metadata first to leverage Docker layer cache.
+COPY pyproject.toml README.md ./
+COPY src ./src
+COPY data ./data
+COPY analysis ./analysis
+COPY configs ./configs
+
+# Install runtime + driver clients + deploy (Fabric needed by the scale-out
+# provisioner that the harness wires up when a scenario carries an S5 trigger).
+RUN pip install --no-cache-dir -e ".[drivers,deploy]"
+
+# Default command: drop into the CLI help.
+CMD ["graph-bench", "--help"]

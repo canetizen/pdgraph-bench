@@ -1,0 +1,38 @@
+# Created by: Mustafa Can Caliskan
+# Date: 2026-04-25
+#
+# Playground variant of S5 (mixed + scale-out). Production version is s5.yaml.
+
+id: playground-s5
+name: Mixed + scale-out (playground)
+workload: snb_iv2
+dataset: snb_iv2_sf0.003
+system: nebulagraph
+worker_count: 4
+warmup_seconds: 10
+measurement_seconds: 60
+query_timeout_seconds: 30
+repetitions: 1
+mix:
+  IS1: 10.0
+  IS2: 10.0
+  IS3: 10.0
+  IS4: 10.0
+  IS5: 10.0
+  IS6: 10.0
+  IS7: 10.0
+  IC1: 5.0
+  IC3: 5.0
+  IC5: 5.0
+  IC6: 5.0
+  IU1: 3.33
+  IU2: 3.33
+  IU6: 3.34
+scale_out:
+  at_offset_seconds: 20
+  # In playground mode the harness is invoked with
+  # --scale-out-compose docker-compose.scaleout.yaml; the provisioner runs
+  # `docker compose up -d` against that file, then calls `ADD HOSTS
+  # "127.0.0.1":9782` to register the reserve storaged with the cluster.
+  target_node: "127.0.0.1:9809"
+  role: storaged

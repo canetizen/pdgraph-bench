@@ -1,0 +1,22 @@
+# Created by: Mustafa Can Caliskan
+# Date: 2026-04-25
+#
+# Production NebulaGraph endpoint. `host` must match the hostname assigned to
+# the SUT node hosting graphd in configs/inventory/cluster.yaml. The `meta_host`
+# is used by the loader and ADD HOSTS calls; align it with that node's metad
+# hostname.
+
+name: nebulagraph
+image: vesoft/nebula-graphd:v3.8.0
+endpoints:
+  - host: node2
+    port: 9669
+options:
+  host: node2
+  port: 9669
+  user: root
+  password: nebula
+  space: snb
+  meta_host: node2
+  meta_port: 9559
+  pool_size: 32

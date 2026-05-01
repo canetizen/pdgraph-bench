@@ -1,0 +1,17 @@
+# Created by: Mustafa Can Caliskan
+# Date: 2026-04-25
+#
+# Production ArangoDB endpoint. `host` is the coordinator-bearing SUT node from
+# configs/inventory/cluster.yaml.
+
+name: arangodb
+image: arangodb/arangodb:3.11.14
+endpoints:
+  - host: node2
+    port: 8529
+options:
+  host: node2
+  port: 8529
+  user: root
+  password: ""
+  database: snb

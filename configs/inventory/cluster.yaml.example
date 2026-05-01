@@ -1,0 +1,35 @@
+# Created by: Mustafa Can Caliskan
+# Date: 2026-04-25
+#
+# Copy this file to cluster.yaml and fill in the hostnames / IPs / SSH user
+# provided by the institution-provided cluster. The checked-in copy stays as
+# .example so that no deployment credentials land in the repository.
+
+cluster_name: ads-benchmark
+
+nodes:
+  node1:
+    hostname: TODO-node1
+    ip: TODO
+    ssh_user: TODO
+    roles: [client, orchestrator]
+  node2:
+    hostname: TODO-node2
+    ip: TODO
+    ssh_user: TODO
+    roles: [sut]
+  node3:
+    hostname: TODO-node3
+    ip: TODO
+    ssh_user: TODO
+    roles: [sut]
+  node4:
+    hostname: TODO-node4
+    ip: TODO
+    ssh_user: TODO
+    roles: [sut]
+  node5:
+    hostname: TODO-node5
+    ip: TODO
+    ssh_user: TODO
+    roles: [reserve]

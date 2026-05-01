@@ -1,0 +1,11 @@
+# Created by: Mustafa Can Caliskan
+# Date: 2026-04-25
+
+name: snb_bi
+queries:
+  - Q1
+  - Q2
+  - Q6
+  - Q11
+parameter_source: data/generated/snb_bi_sf1/parameters/
+options: {}

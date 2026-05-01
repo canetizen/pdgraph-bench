@@ -1,0 +1,25 @@
+# Created by: Mustafa Can Caliskan
+# Date: 2026-04-25
+#
+# Short scenario for proving the cluster is benchmark-ready. NOT for paper
+# results — duration is too short and the workload is synthetic.
+
+id: demo
+name: Demo cluster smoke
+workload: synthetic_snb
+dataset: synthetic_snb
+system: nebulagraph
+worker_count: 4
+warmup_seconds: 10
+measurement_seconds: 30
+query_timeout_seconds: 30
+repetitions: 1
+mix:
+  IS1: 50.0
+  IS2: 25.0
+  IS3: 15.0
+  IU1: 10.0
+scale_out:
+  at_offset_seconds: 15
+  target_node: storaged-reserve:9779
+  role: storaged
