@@ -13,11 +13,19 @@ auto-join. JanusGraph servers attach to the local Cassandra node.
 Tier 2 in this study: scenario S1 only. Scale-out is supported by joining a
 new Cassandra node on the reserve host (`nodetool` performs the actual join
 once the daemon is running).
+
+Co-located nodes (single-host playground): Cassandra needs unique
+listen+broadcast addresses for gossip, which a single localhost cannot
+provide for multiple instances without IP aliasing. To keep the playground
+runnable, the deployer emits services for at most one logical node per
+unique hostname — the first sut node on that hostname. In production, where
+each logical node lives on a different host, this collapses to the standard
+3-node ring.
 """
 
 from __future__ import annotations
 
-from graph_bench.orchestration.inventory import Inventory
+from graph_bench.orchestration.inventory import Inventory, NodeInfo
 from graph_bench.orchestration.plan import DeploymentPlan, HealthCheck, ServiceSpec
 
 
@@ -25,14 +33,31 @@ _CASSANDRA_IMAGE = "cassandra:4.1"
 _JANUSGRAPH_IMAGE = "janusgraph/janusgraph:1.0.0"
 
 
-def _cassandra_seeds(inventory: Inventory) -> str:
-    return ",".join(n.hostname for n in inventory.sut_nodes[:1])
+def _unique_host_sut_nodes(inventory: Inventory) -> list[NodeInfo]:
+    """Return one sut node per distinct hostname (first-seen wins).
+
+    Avoids spawning multiple Cassandra rings on the same physical host in the
+    single-host playground.
+    """
+    seen: set[str] = set()
+    picked: list[NodeInfo] = []
+    for node in inventory.sut_nodes:
+        if node.hostname in seen:
+            continue
+        seen.add(node.hostname)
+        picked.append(node)
+    return picked
 
 
-def _cassandra_service(host: str, seeds: str, cluster_name: str = "graph-bench") -> ServiceSpec:
+def _cassandra_seeds(active_nodes: list[NodeInfo]) -> str:
+    return active_nodes[0].hostname if active_nodes else ""
+
+
+def _cassandra_service(node: NodeInfo, seeds: str, cluster_name: str = "graph-bench") -> ServiceSpec:
+    host = node.hostname
     return ServiceSpec(
         name="cassandra",
-        container_name=f"gb-{host}-cassandra",
+        container_name=f"gb-{node.name}-cassandra",
         image=_CASSANDRA_IMAGE,
         env={
             "CASSANDRA_CLUSTER_NAME": cluster_name,
@@ -49,7 +74,7 @@ def _cassandra_service(host: str, seeds: str, cluster_name: str = "graph-bench")
             "HEAP_NEWSIZE": "256M",
         },
         volumes=(
-            (f"./gb-data/{host}/cassandra", "/var/lib/cassandra"),
+            (f"./gb-data/{node.name}/cassandra", "/var/lib/cassandra"),
         ),
         healthcheck=HealthCheck(
             test=["CMD-SHELL", "nodetool status | grep -q 'UN' || exit 1"],
@@ -61,28 +86,43 @@ def _cassandra_service(host: str, seeds: str, cluster_name: str = "graph-bench")
     )
 
 
-def _janusgraph_service(host: str, cassandra_seed: str) -> ServiceSpec:
-    # JanusGraph reads connection settings from environment via its
-    # `janusgraph.properties` template (the official image generates one when
-    # `JANUS_PROPS_TEMPLATE` selects `cassandra-cql-es` or similar).
+def _janusgraph_service(node: NodeInfo, cassandra_seed: str) -> ServiceSpec:
+    # JanusGraph's official image (`/usr/local/bin/docker-entrypoint.sh`):
+    #  - selects `conf/janusgraph-${JANUS_PROPS_TEMPLATE}-server.properties` and
+    #    copies it as the active properties file
+    #  - rewrites lines matching `janusgraph.X.Y` env vars into that properties
+    #    file (so the keys below are NOT compose env vars in spirit, they're
+    #    config overrides translated by the entrypoint)
+    #  - if `JANUS_STORAGE_TIMEOUT` is set, polls the backend with `gremlin.sh`
+    #    until it answers (avoids racing Cassandra startup)
+    host = node.hostname
     return ServiceSpec(
         name="janusgraph",
-        container_name=f"gb-{host}-janusgraph",
+        container_name=f"gb-{node.name}-janusgraph",
         image=_JANUSGRAPH_IMAGE,
+        depends_on={"cassandra": "service_healthy"},
         env={
+            "JANUS_PROPS_TEMPLATE": "cql",
+            "JANUS_STORAGE_TIMEOUT": "300",
             "janusgraph.storage.backend": "cql",
             "janusgraph.storage.hostname": cassandra_seed,
             "janusgraph.storage.cql.keyspace": "janusgraph",
+            # Cassandra 4 CQL driver requires an explicit local-datacenter;
+            # we set DC1 to match the cassandra service env (CASSANDRA_DC=DC1).
+            "janusgraph.storage.cql.local-datacenter": "DC1",
             "janusgraph.cache.db-cache": "true",
         },
         volumes=(
-            (f"./gb-data/{host}/janusgraph-data", "/var/lib/janusgraph"),
+            (f"./gb-data/{node.name}/janusgraph-data", "/var/lib/janusgraph"),
         ),
+        # Gremlin server speaks WebSocket on 8182, not plain HTTP, so a
+        # `curl /` healthcheck always fails. We do a bash /dev/tcp port-open
+        # check — bash is present in this image.
         healthcheck=HealthCheck(
-            test=["CMD", "curl", "-f", f"http://{host}:8182/"],
+            test=["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/8182"],
             interval_s=15,
             timeout_s=10,
-            retries=10,
+            retries=20,
             start_period_s=180,
         ),
     )
@@ -92,16 +132,25 @@ class JanusGraphDeployer:
     sut_name = "janusgraph"
 
     def plan_initial(self, inventory: Inventory) -> DeploymentPlan:
-        seeds = _cassandra_seeds(inventory)
+        active = _unique_host_sut_nodes(inventory)
+        seeds = _cassandra_seeds(active)
         services_per_node: dict[str, list[ServiceSpec]] = {}
-        for node in inventory.sut_nodes:
-            host = node.hostname
-            services_per_node[host] = [
-                _cassandra_service(host, seeds),
-                _janusgraph_service(host, host),
+        for node in active:
+            services_per_node[node.name] = [
+                _cassandra_service(node, seeds),
+                _janusgraph_service(node, node.hostname),
             ]
         return DeploymentPlan(sut=self.sut_name, services_per_node=services_per_node)
 
     def plan_scaleout(self, inventory: Inventory, target: str) -> tuple[str, ServiceSpec]:
         node = inventory.by_name(target)
-        return node.hostname, _cassandra_service(node.hostname, _cassandra_seeds(inventory))
+        active = _unique_host_sut_nodes(inventory)
+        seeds = _cassandra_seeds(active)
+        return node.name, _cassandra_service(node, seeds)
+
+    def scale_out_endpoint(self, inventory: Inventory, target: str) -> str:
+        # Cassandra gossip auto-discovers — `add_node` here is a no-op shim
+        # that just confirms the new ring member; pointing the driver at the
+        # CQL port is the right "endpoint" semantically.
+        node = inventory.by_name(target)
+        return f"{node.hostname}:9042"

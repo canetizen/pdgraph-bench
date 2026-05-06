@@ -19,9 +19,12 @@ SUT-specific `Deployer` (under `graph_bench.orchestration.deployers`). When an
 inventory hostname resolves to localhost the runner falls back to local
 `docker compose`; otherwise commands are executed via SSH (Fabric `Connection`).
 
-The single docker-compose.cluster.yaml under repo root remains as the *local
-simulation* of the production topology — useful for smoke testing without
-touching real machines. Production runs use the orchestration package.
+There is one code path for both production and the single-host playground —
+the only thing that differs is the inventory. Use
+`configs/inventory/cluster.yaml.playground` for a fully local run (3 sut +
+1 reserve nodes all co-located on localhost, deployer auto-applies port
+offsets) or `configs/inventory/cluster.yaml.example` as a template for a
+real multi-host cluster.
 """
 
 from __future__ import annotations
@@ -73,7 +76,9 @@ def tear_down(ctx, system: str, inventory: str = str(DEFAULT_INVENTORY)) -> None
     "sf": "Scale factor (e.g., 0.1, 1, 3)",
     "out": "Output directory under data/generated/ on the client node",
 })
-def generate_data(ctx, workload: str, sf: float = 1, out: str = "") -> None:
+def generate_data(ctx, workload: str, sf: str = "1", out: str = "") -> None:
+    # `sf` is a free-form string (e.g. "0.003", "1", "3") so invoke does not
+    # try to coerce it to int based on the default literal type.
     target = out or f"data/generated/{workload}_sf{sf}"
     if workload == "synthetic_snb":
         # Synthetic generator runs in-process; SF is ignored, persons/avg-degree control size.
@@ -96,7 +101,8 @@ def generate_data(ctx, workload: str, sf: float = 1, out: str = "") -> None:
     "system-config": "Override path to the system YAML; default configs/systems/<system>.yaml",
 })
 def load_data(ctx, system: str, workload: str, dataset_path: str = "",
-              system_config: str = "") -> None:
+              system_config: str = "",
+              inventory: str = str(DEFAULT_INVENTORY)) -> None:
     """Run the per-(system, workload) loader.
 
     The system YAML supplies host/port/user/password/space/database/graph to the
@@ -105,12 +111,13 @@ def load_data(ctx, system: str, workload: str, dataset_path: str = "",
     """
     from graph_bench.utils.config import load_system
     from graph_bench.orchestration import SSHRunner
-    inv = _load_inventory(Path(DEFAULT_INVENTORY))
+    inv = _load_inventory(Path(inventory))
     client = _client_node(inv)
+    sut_hostname = inv.sut_nodes[0].hostname if inv.sut_nodes else None
 
     sys_yaml = Path(system_config or f"configs/systems/{system}.yaml")
-    sys_cfg = load_system(sys_yaml)
-    loader_args = _loader_cli_args(system, sys_cfg.options)
+    sys_cfg = load_system(sys_yaml, sut_hostname=sut_hostname)
+    loader_args = _loader_cli_args(system, sys_cfg.options, inv, workload)
 
     dataset = dataset_path or f"data/generated/{workload}"
     module = _loader_module(system, workload)
@@ -128,18 +135,26 @@ def load_data(ctx, system: str, workload: str, dataset_path: str = "",
             conn.run(f"cd {REPO_ROOT} && {cmd}")
 
 
-def _loader_cli_args(system: str, options: dict) -> list[str]:
+def _loader_cli_args(system: str, options: dict, inv, workload: str = "") -> list[str]:
     """Translate per-SUT system YAML options into loader CLI flags.
 
     Loader argparse contracts accept the same names across SUTs where they make
     sense (host, port, user, password) and SUT-specific flags otherwise (space,
     database, graph, zero_host, zero_port).
+
+    `inv` lets us derive cluster-shape facts (storage hosts for NebulaGraph,
+    seed/agency endpoints for others) from the inventory + per-SUT deployer
+    rather than hard-coding them in the system YAML.
     """
     args: list[str] = []
     if "host" in options:
         args.append(f"--host {shlex.quote(str(options['host']))}")
     if "port" in options:
         args.append(f"--port {int(options['port'])}")
+    # Every SNB loader (Iv2 + BI) shares an argparse `--mode` flag; default
+    # is `interactive` so we only emit it for the BI variant.
+    if workload == "snb_bi":
+        args.append("--mode bi")
 
     if system == "nebulagraph":
         if "user" in options:
@@ -148,6 +163,19 @@ def _loader_cli_args(system: str, options: dict) -> list[str]:
             args.append(f"--password {shlex.quote(str(options['password']))}")
         if "space" in options:
             args.append(f"--space {shlex.quote(str(options['space']))}")
+        # Derive storage hosts (host:port pairs) from the deployer's port plan
+        # so the loader can ADD HOSTS without the operator hand-editing YAML.
+        from graph_bench.orchestration.deployers.nebulagraph import (
+            _port_offsets, _STORAGED_BASE,
+        )
+        offsets = _port_offsets(inv)
+        storage_hosts = ",".join(
+            f"{n.hostname}:{_STORAGED_BASE + offsets[n.name]}"
+            for n in inv.sut_nodes
+        )
+        if storage_hosts:
+            args.append(f"--storage-hosts {shlex.quote(storage_hosts)}")
+            args.append(f"--expected-storage-hosts {len(inv.sut_nodes)}")
     elif system == "arangodb":
         if "user" in options:
             args.append(f"--user {shlex.quote(str(options['user']))}")
@@ -203,13 +231,15 @@ def _loader_module(system: str, workload: str) -> str:
     "system-config": "Override path to the system YAML; default configs/systems/<system>.yaml",
 })
 def validate(ctx, system: str, dataset_path: str, workload: str = "synthetic_snb",
-             system_config: str = "") -> None:
+             system_config: str = "",
+             inventory: str = str(DEFAULT_INVENTORY)) -> None:
     sys_yaml = system_config or f"configs/systems/{system}.yaml"
     cmd = (
         f"python -m data.validators.runner --system {system} "
         f"--system-config {shlex.quote(sys_yaml)} "
         f"--workload {workload} "
-        f"--dataset {shlex.quote(dataset_path)}"
+        f"--dataset {shlex.quote(dataset_path)} "
+        f"--inventory {shlex.quote(inventory)}"
     )
     ctx.run(cmd, pty=False)
 

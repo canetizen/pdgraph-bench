@@ -63,7 +63,7 @@ class HugeGraphDriver:
             base_url=self._base_url, timeout=self._timeout
         )
         # Validate graph existence by hitting the schema endpoint.
-        resp = await self._client.get(f"/apis/graphs/{self._graph}")
+        resp = await self._client.get(f"/graphs/{self._graph}")
         resp.raise_for_status()
 
     async def disconnect(self) -> None:
@@ -100,7 +100,7 @@ class HugeGraphDriver:
         }
 
         try:
-            resp = await self._client.post("/apis/gremlin", json=payload)
+            resp = await self._client.post("/gremlin", json=payload)
         except httpx.HTTPError as exc:
             return QueryResult(ref=request.ref, status=QueryStatus.ERROR, error_message=str(exc))
 
@@ -126,7 +126,7 @@ class HugeGraphDriver:
         if self._client is None:
             return ClusterStatus(node_count=0, healthy_nodes=0)
         try:
-            resp = await self._client.get("/apis/version")
+            resp = await self._client.get("/versions")
             version = resp.json().get("versions", {}).get("server") if resp.status_code == 200 else None
         except httpx.HTTPError:
             version = None

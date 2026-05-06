@@ -110,6 +110,11 @@ def main(argv: list[str] | None = None) -> int:
         default="storaged0:9779,storaged1:9779,storaged2:9779",
         help="Comma-separated host:port list of storaged instances; ignored if already registered.",
     )
+    p.add_argument(
+        "--expected-storage-hosts", type=int, default=0,
+        help="Wait until this many storage hosts are ONLINE before loading; "
+             "0 means inferred from --storage-hosts.",
+    )
     args = p.parse_args(argv)
 
     layout = LdbcDatasetLayout(base=args.dataset, mode=args.mode)

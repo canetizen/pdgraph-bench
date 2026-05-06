@@ -31,7 +31,7 @@ def _wait(client: httpx.Client, graph: str, timeout_s: int = 240) -> None:
     last_err: Exception | None = None
     while time.time() < deadline:
         try:
-            r = client.get(f"/apis/graphs/{graph}")
+            r = client.get(f"/graphs/{graph}")
             if r.status_code == 200:
                 return
         except Exception as exc:  # noqa: BLE001
@@ -42,7 +42,7 @@ def _wait(client: httpx.Client, graph: str, timeout_s: int = 240) -> None:
 
 def _ensure_schema(client: httpx.Client, graph: str) -> None:
     """Pre-declare the property keys, vertex labels, and edge labels we touch."""
-    base = f"/apis/graphs/{graph}/schema"
+    base = f"/graphs/{graph}/schema"
 
     # Property keys: union over all vertex + edge properties + the universal `id`.
     pk_specs = [("id", "LONG", "SINGLE")]
@@ -73,11 +73,17 @@ def _ensure_schema(client: httpx.Client, graph: str) -> None:
             print(f"[loader] (schema warning) propertykey {name}: {r.status_code} {r.text[:120]}")
 
     for v in VERTICES:
+        # Mark every non-key property nullable. Real LDBC SNB CSV rows have
+        # legitimately-missing optional columns (e.g. Post.imageFile vs
+        # Post.content — exactly one is set per row); without `nullable_keys`
+        # HugeGraph rejects the insert with "missed keys [...]".
+        prop_names = [p.name for p in v.properties]
         body = {
             "name": v.name,
             "id_strategy": "PRIMARY_KEY",
             "primary_keys": ["id"],
-            "properties": ["id"] + [p.name for p in v.properties],
+            "properties": ["id"] + prop_names,
+            "nullable_keys": prop_names,
         }
         r = client.post(f"{base}/vertexlabels", json=body)
         if r.status_code not in (200, 201, 400):
@@ -112,7 +118,7 @@ def _submit_factory(client: httpx.Client, graph: str):
 
     def _submit(script: str) -> None:
         r = client.post(
-            "/apis/gremlin",
+            "/gremlin",
             json={"gremlin": script, "language": "gremlin-groovy", "aliases": aliases},
         )
         if r.status_code >= 400:
@@ -139,6 +145,17 @@ def main(argv: list[str] | None = None) -> int:
     client = httpx.Client(base_url=base_url, timeout=30.0)
     print(f"[loader] connecting to {base_url}")
     _wait(client, args.graph)
+    # Wipe any pre-existing graph state so a re-run picks up the latest
+    # schema (HugeGraph keeps Cassandra-backed schema across container
+    # restarts; old `nullable_keys`-less labels would otherwise reject
+    # rows with missing optional columns).
+    confirm = "I'm sure to delete all data"
+    r = client.delete(
+        f"/graphs/{args.graph}/clear",
+        params={"confirm_message": confirm},
+    )
+    if r.status_code not in (200, 204, 400, 404):
+        print(f"[loader] (clear warning) {r.status_code} {r.text[:200]}")
     _ensure_schema(client, args.graph)
     submit = _submit_factory(client, args.graph)
 

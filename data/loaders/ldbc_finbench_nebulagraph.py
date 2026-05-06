@@ -108,6 +108,10 @@ def main(argv: list[str] | None = None) -> int:
         "--storage-hosts",
         default="storaged0:9779,storaged1:9779,storaged2:9779",
     )
+    p.add_argument(
+        "--expected-storage-hosts", type=int, default=0,
+        help="Wait until this many storage hosts are ONLINE; 0 = inferred.",
+    )
     args = p.parse_args(argv)
 
     layout = FinbenchDatasetLayout(base=args.dataset)

@@ -154,11 +154,11 @@ ok "dataset generated"
 note "loading $WORKLOAD into $SYSTEM"
 DATASET_PATH="data/generated/${WORKLOAD}_sf${SF}"
 [ "$WORKLOAD" = "synthetic_snb" ] && DATASET_PATH="data/generated/synthetic_snb"
-uv run fab --search-root deploy/fabric load-data --system="$SYSTEM" --workload="$WORKLOAD" --dataset-path="$DATASET_PATH"
+uv run fab --search-root deploy/fabric load-data --system="$SYSTEM" --workload="$WORKLOAD" --dataset-path="$DATASET_PATH" --inventory="$INVENTORY"
 ok "data loaded"
 
 note "running post-load validator"
-uv run fab --search-root deploy/fabric validate --system="$SYSTEM" --dataset-path="$DATASET_PATH" --workload="$WORKLOAD"
+uv run fab --search-root deploy/fabric validate --system="$SYSTEM" --dataset-path="$DATASET_PATH" --workload="$WORKLOAD" --inventory="$INVENTORY"
 ok "validator passed"
 
 note "summary"

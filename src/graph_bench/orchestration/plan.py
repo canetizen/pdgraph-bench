@@ -52,6 +52,11 @@ class ServiceSpec:
 
     image: str
 
+    entrypoint: tuple[str, ...] | None = None
+    """Override the image's ENTRYPOINT. Some upstream images (notably
+    ArangoDB) ship an entrypoint shell that ignores or rewrites our CLI
+    args; setting this bypasses that shell entirely."""
+
     command: tuple[str, ...] = ()
 
     env: dict[str, str] = field(default_factory=dict)
@@ -73,12 +78,19 @@ class ServiceSpec:
     used as a fallback when the host's own /etc/hosts does not resolve all
     peer hostnames (e.g., bridge-network deployments)."""
 
+    depends_on: dict[str, str] = field(default_factory=dict)
+    """Map of `service_name → condition` (e.g. `"service_healthy"`); rendered
+    as Compose's long-form `depends_on:`. Lets a service hold off start-up
+    until a peer in the same compose project is ready."""
+
     def to_compose_service(self) -> dict[str, object]:
         body: dict[str, object] = {
             "image": self.image,
             "container_name": self.container_name,
             "restart": self.restart,
         }
+        if self.entrypoint is not None:
+            body["entrypoint"] = list(self.entrypoint)
         if self.command:
             body["command"] = list(self.command)
         if self.env:
@@ -91,6 +103,10 @@ class ServiceSpec:
             body["healthcheck"] = self.healthcheck.to_compose()
         if self.extra_hosts:
             body["extra_hosts"] = [f"{h}:{ip}" for h, ip in self.extra_hosts.items()]
+        if self.depends_on:
+            body["depends_on"] = {
+                svc: {"condition": cond} for svc, cond in self.depends_on.items()
+            }
         return body
 
 
@@ -98,7 +114,13 @@ class ServiceSpec:
 class DeploymentPlan:
     sut: str
     services_per_node: dict[str, list[ServiceSpec]]
-    """Keyed by node hostname (NOT logical name) so the runner can ssh directly."""
+    """Keyed by *logical* node name (e.g. `node2`), not hostname.
+
+    Two logical nodes can share a hostname (single-host playground) — keying
+    by name keeps their service sets distinct so each gets its own compose
+    project. The runner resolves the name back to a `NodeInfo` when it needs
+    the hostname / SSH user to push the compose file.
+    """
 
     def nodes(self) -> tuple[str, ...]:
         return tuple(self.services_per_node.keys())
@@ -114,10 +136,17 @@ class Deployer(Protocol):
         ...
 
     def plan_scaleout(self, inventory: Inventory, target: str) -> tuple[str, ServiceSpec]:
-        """Return (host_hostname, service) for the new instance to start.
+        """Return (logical_node_name, service) for the new instance to start.
 
-        `target` is the logical node name (e.g., `node5`); the deployer maps it
-        to the inventory's hostname and emits the `ServiceSpec` that the
-        Fabric `scale-out` task will start on that node.
+        `target` is the logical node name (e.g., `node5`); the deployer emits
+        the `ServiceSpec` that the runner will start on that node.
+        """
+        ...
+
+    def scale_out_endpoint(self, inventory: Inventory, target: str) -> str:
+        """Return the cluster-visible endpoint (`host:port`) of the scale-out
+        instance — what `driver.add_node` should register with the running
+        cluster (e.g., `ADD HOSTS` for NebulaGraph). The port matches the
+        port the deployer assigned in `plan_scaleout`.
         """
         ...

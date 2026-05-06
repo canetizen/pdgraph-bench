@@ -1,16 +1,17 @@
 # Created by: Mustafa Can Caliskan
 # Date: 2026-04-25
 #
-# Production ArangoDB endpoint. `host` is the coordinator-bearing SUT node from
-# configs/inventory/cluster.yaml.
+# ArangoDB endpoint. `host: auto` resolves to the first sut node's hostname in
+# the inventory so the same YAML works for playground (localhost) and
+# production (real hostnames).
 
 name: arangodb
 image: arangodb/arangodb:3.11.14
 endpoints:
-  - host: node2
+  - host: auto
     port: 8529
 options:
-  host: node2
+  host: auto
   port: 8529
   user: root
   password: ""

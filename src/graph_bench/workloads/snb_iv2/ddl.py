@@ -153,11 +153,17 @@ def dgraph_schema() -> str:
             else:
                 out_edge_labels[v.name].append(fk.edge_label)
 
+    # Dgraph parses each predicate inside a `type { ... }` block on its own
+    # line — space-separated names trigger "Missing colon in type declaration".
     for v in VERTICES:
         prop_names = [p.name for p in v.properties]
         edge_names = out_edge_labels.get(v.name, [])
-        body = " ".join(prop_names + edge_names).strip()
-        lines.append(f"type {v.name} {{ {body} }}")
+        members = prop_names + edge_names
+        if not members:
+            lines.append(f"type {v.name} {{}}")
+        else:
+            body = "\n  ".join(members)
+            lines.append(f"type {v.name} {{\n  {body}\n}}")
 
     return "\n".join(lines) + "\n"
 

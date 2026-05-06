@@ -9,4 +9,4 @@ queries:
   - IU1
 parameter_source: data/generated/synthetic_snb/parameters.json
 options:
-  parameter_source: /app/data/generated/synthetic_snb/parameters.json
+  parameter_source: data/generated/synthetic_snb/parameters.json

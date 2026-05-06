@@ -69,25 +69,28 @@ end-to-end without needing a real database.
 
 ## Single-host playground
 
-For local validation against a real NebulaGraph cluster simulated on one
-host:
+The same orchestration code path that drives a real cluster also drives a
+single-host simulation — the only thing that differs is the inventory.
+`configs/inventory/cluster.yaml.playground` declares all five logical nodes
+on `localhost`; the deployers detect co-location and apply per-node port
+offsets (10-spaced) so each instance keeps a clear port window.
 
 ```bash
-docker compose -f docker-compose.cluster.yaml up -d
-docker exec gb-node1 python -m data.loaders.ldbc_snb_nebulagraph \
-    --host 127.0.0.1 --port 9669 --user root --password nebula \
-    --space snb \
-    --storage-hosts "127.0.0.1:9779,127.0.0.1:9789,127.0.0.1:9799" \
-    --dataset /app/data/generated/snb_iv2_sf0.003
-docker exec gb-node1 pdgraph-bench run \
+cp configs/inventory/cluster.yaml.playground configs/inventory/cluster.yaml
+bash scripts/setup-cluster.sh nebulagraph snb_iv2 0.003
+
+uv run pdgraph-bench run \
     configs/scenarios/playground-s1.yaml \
-    --system configs/systems/nebulagraph-playground.yaml \
-    --workload configs/workloads/snb_iv2-playground.yaml \
-    --results results --run-id playground-s1
+    --system configs/systems/nebulagraph.yaml \
+    --workload configs/workloads/snb_iv2.yaml \
+    --inventory configs/inventory/cluster.yaml
 ```
 
-S5 (with scale-out) is invoked the same way, with the reserve container's
-compose file passed via `--scale-out-compose docker-compose.scaleout.yaml`.
+S5 (with scale-out) is invoked the same way against
+`configs/scenarios/playground-s5.yaml` — the harness's scale-out
+provisioner brings up the reserve storaged on `node5` (which resolves to
+`localhost` in the playground) using the same deployer + runner that
+production uses.
 
 ## Deploying on a real cluster
 

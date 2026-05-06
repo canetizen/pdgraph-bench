@@ -141,9 +141,23 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--system-config", type=Path, help="Path to system YAML; options are read from it.")
     parser.add_argument("--dataset", type=Path, required=True, help="Generated dataset directory.")
+    parser.add_argument(
+        "--inventory", type=Path, default=None,
+        help="Cluster inventory YAML; used to resolve `host: auto` in the system YAML.",
+    )
     args = parser.parse_args(argv)
 
-    options = load_system(args.system_config).options if args.system_config else {}
+    sut_hostname = None
+    if args.inventory and args.inventory.exists():
+        from graph_bench.orchestration import load_inventory
+        inv = load_inventory(args.inventory)
+        sut_hostname = inv.sut_nodes[0].hostname if inv.sut_nodes else None
+
+    options = (
+        load_system(args.system_config, sut_hostname=sut_hostname).options
+        if args.system_config
+        else {}
+    )
     result = asyncio.run(run_validation(args.system, options, args.workload, args.dataset))
     print(result.summary())
     return 0 if result.ok else 1

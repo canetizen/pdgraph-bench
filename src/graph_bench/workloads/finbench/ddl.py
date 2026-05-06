@@ -80,10 +80,16 @@ def dgraph_schema() -> str:
     out_edges: dict[str, list[str]] = {v.name: [] for v in VERTICES}
     for e in EDGES:
         out_edges[e.src_label].append(e.name)
+    # Each predicate must be on its own line inside `type { ... }` for Dgraph
+    # to parse correctly; a space-separated body raises "Missing colon".
     for v in VERTICES:
         prop_names = [p.name for p in v.properties]
-        body = " ".join(prop_names + out_edges.get(v.name, [])).strip()
-        lines.append(f"type {v.name} {{ {body} }}")
+        members = prop_names + out_edges.get(v.name, [])
+        if not members:
+            lines.append(f"type {v.name} {{}}")
+        else:
+            body = "\n  ".join(members)
+            lines.append(f"type {v.name} {{\n  {body}\n}}")
     return "\n".join(lines) + "\n"
 
 

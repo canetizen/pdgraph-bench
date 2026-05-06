@@ -1,12 +1,12 @@
 # Created by: Mustafa Can Caliskan
 # Date: 2026-04-25
 
-"""Typer-based command-line interface for `graph-bench`.
+"""Typer-based command-line interface for `pdgraph-bench`.
 
 Entry points:
-- `graph-bench list-systems`     — print registered drivers.
-- `graph-bench list-workloads`   — print registered workloads.
-- `graph-bench run <scenario>`   — execute a scenario config against a chosen driver.
+- `pdgraph-bench list-systems`     — print registered drivers.
+- `pdgraph-bench list-workloads`   — print registered workloads.
+- `pdgraph-bench run <scenario>`   — execute a scenario config against a chosen driver.
 
 The CLI is a thin wiring layer: it resolves driver/workload names via the
 registries, loads YAML into Pydantic config models, projects those into
@@ -54,17 +54,30 @@ def list_workloads() -> None:
         typer.echo(name)
 
 
+def _first_sut_hostname(inventory_path: Path) -> str | None:
+    """Return the first sut node's hostname from `inventory_path`, or `None` if
+    the inventory has no sut nodes. Used to resolve `host: auto` in system YAML.
+    """
+    from graph_bench.orchestration import load_inventory
+    inv = load_inventory(inventory_path)
+    return inv.sut_nodes[0].hostname if inv.sut_nodes else None
+
+
 def _build_scale_out_provisioner(
     system_name: str,
     target_node_logical: str,
     inventory_path: Path,
 ):
-    """Production scale-out provisioner: SSH into the reserve node and `docker
-    compose up` the new SUT instance.
+    """Scale-out provisioner — bring up the new SUT instance on the reserve
+    node and return its cluster-visible hostname.
 
-    Imports `graph_bench.orchestration` lazily so that running scenarios that
-    do not include a scale-out trigger does not require the `deploy` extra to
-    be installed.
+    Single code path for production and playground: `SSHRunner` falls back to
+    a local subprocess when the reserve node's hostname resolves to localhost,
+    so the same call works whether the reserve "node" is a remote host or
+    co-located with the orchestrator.
+
+    `graph_bench.orchestration` is imported lazily so scenarios without a
+    scale-out trigger don't pull in the deploy extra.
     """
     from graph_bench.orchestration import SSHRunner, load_inventory
     from graph_bench.orchestration.deployers import get_deployer
@@ -74,30 +87,12 @@ def _build_scale_out_provisioner(
     runner = SSHRunner(inventory)
 
     async def _provisioner() -> str:
-        target_host, service = deployer.plan_scaleout(inventory, target_node_logical)
-        await asyncio.to_thread(runner.add_service, target_host, system_name, service)
-        return target_host
-
-    return _provisioner
-
-
-def _build_local_compose_provisioner(compose_path: Path, target_hostname: str):
-    """Single-host scale-out provisioner: `docker compose up -d` against a
-    pre-baked compose file on the local docker daemon.
-
-    Used when the new SUT instance lives in the same docker daemon as the
-    benchmark client (e.g., the playground compose), where SSHing into the
-    "node" makes no sense because the node IS the local host.
-    """
-    import subprocess
-
-    async def _provisioner() -> str:
-        await asyncio.to_thread(
-            subprocess.run,
-            ["docker", "compose", "-f", str(compose_path), "up", "-d"],
-            check=True,
-        )
-        return target_hostname
+        target_node, service = deployer.plan_scaleout(inventory, target_node_logical)
+        await asyncio.to_thread(runner.add_service, target_node, system_name, service)
+        # Return the cluster-visible `host:port` so `driver.add_node` registers
+        # the right endpoint (NebulaGraph picks the storaged port the deployer
+        # actually used; Dgraph picks the alpha grpc-int port; etc.).
+        return deployer.scale_out_endpoint(inventory, target_node_logical)
 
     return _provisioner
 
@@ -110,15 +105,24 @@ def run(
     inventory: Path = typer.Option(
         Path("configs/inventory/cluster.yaml"),
         "--inventory",
-        help="Cluster inventory YAML; required when the scenario includes a scale-out "
-             "trigger and no --scale-out-compose is given (production path).",
+        help="Cluster inventory YAML; required when the scenario includes a scale-out trigger.",
     ),
-    scale_out_compose: Path | None = typer.Option(
-        None, "--scale-out-compose",
-        help="Path to a docker-compose file that brings up the reserve SUT instance "
-             "on the local docker daemon. When set, the scale-out provisioner runs "
-             "`docker compose up -d` against this file instead of going through "
-             "Fabric/SSH. Used by the single-host playground.",
+    system_name: str | None = typer.Option(
+        None, "--system-name",
+        help="Override the scenario YAML's `system` field (driver registry name "
+             "like `nebulagraph`/`arangodb`). Lets one scenario YAML drive every SUT.",
+    ),
+    warmup_seconds: int | None = typer.Option(
+        None, "--warmup-seconds", min=0,
+        help="Override the scenario YAML's `warmup_seconds`. Useful for dry-runs.",
+    ),
+    measurement_seconds: int | None = typer.Option(
+        None, "--measurement-seconds", min=1,
+        help="Override the scenario YAML's `measurement_seconds`. Useful for dry-runs.",
+    ),
+    worker_count: int | None = typer.Option(
+        None, "--worker-count", min=1,
+        help="Override the scenario YAML's `worker_count`.",
     ),
     results_root: Path = typer.Option(
         Path("results"), "--results", help="Parent directory for per-run output."
@@ -130,7 +134,19 @@ def run(
     configure()
 
     scenario_cfg = load_scenario(scenario)
-    system_cfg = load_system(system)
+    overrides: dict[str, object] = {}
+    if system_name:
+        overrides["system"] = system_name
+    if warmup_seconds is not None:
+        overrides["warmup_seconds"] = warmup_seconds
+    if measurement_seconds is not None:
+        overrides["measurement_seconds"] = measurement_seconds
+    if worker_count is not None:
+        overrides["worker_count"] = worker_count
+    if overrides:
+        scenario_cfg = scenario_cfg.model_copy(update=overrides)
+    sut_hostname = _first_sut_hostname(inventory) if inventory.exists() else None
+    system_cfg = load_system(system, sut_hostname=sut_hostname)
     workload_cfg = load_workload(workload)
 
     driver = DriverRegistry.create(scenario_cfg.system, system_cfg.options)
@@ -143,28 +159,18 @@ def run(
 
     provisioner = None
     if spec.scale_out is not None:
-        if scale_out_compose is not None:
-            if not scale_out_compose.exists():
-                raise typer.BadParameter(
-                    f"--scale-out-compose {scale_out_compose} does not exist"
-                )
-            provisioner = _build_local_compose_provisioner(
-                scale_out_compose,
-                target_hostname=spec.scale_out.target_node,
+        if not inventory.exists():
+            raise typer.BadParameter(
+                f"scenario {spec.id!r} declares a scale-out trigger but inventory "
+                f"{inventory} does not exist; copy "
+                f"configs/inventory/cluster.yaml.playground (or cluster.yaml.example) "
+                f"to that path and adjust as needed."
             )
-        else:
-            if not inventory.exists():
-                raise typer.BadParameter(
-                    f"scenario {spec.id!r} declares a scale-out trigger; provide either "
-                    f"--inventory pointing at a populated cluster inventory (production) "
-                    f"or --scale-out-compose pointing at a local docker compose file "
-                    f"(playground)."
-                )
-            provisioner = _build_scale_out_provisioner(
-                scenario_cfg.system,
-                spec.scale_out.target_node,
-                inventory,
-            )
+        provisioner = _build_scale_out_provisioner(
+            scenario_cfg.system,
+            spec.scale_out.target_node,
+            inventory,
+        )
 
     ctx = RunContext(
         spec=spec,

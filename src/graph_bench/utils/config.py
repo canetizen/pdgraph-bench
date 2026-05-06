@@ -145,8 +145,34 @@ def load_scenario(path: Path) -> ScenarioConfig:
     return ScenarioConfig.model_validate(load_yaml(path))
 
 
-def load_system(path: Path) -> SystemConfig:
-    return SystemConfig.model_validate(load_yaml(path))
+_AUTO_HOST_OPTIONS = ("host", "meta_host", "zero_host")
+
+
+def load_system(path: Path, *, sut_hostname: str | None = None) -> SystemConfig:
+    """Load a system YAML; optionally resolve `auto` host options.
+
+    A system YAML can set `host: auto` (or `meta_host: auto`, `zero_host: auto`)
+    so the same file works for the playground (where the sut nodes resolve to
+    `localhost`) and for production (where they resolve to real hostnames).
+    The caller passes `sut_hostname` (typically the first sut node's hostname
+    from the inventory) and any `auto` value is replaced with that hostname.
+    """
+    cfg = SystemConfig.model_validate(load_yaml(path))
+    if not sut_hostname:
+        return cfg
+    options = dict(cfg.options)
+    changed = False
+    for key in _AUTO_HOST_OPTIONS:
+        if options.get(key) == "auto":
+            options[key] = sut_hostname
+            changed = True
+    if not changed:
+        return cfg
+    endpoints = [
+        ep.model_copy(update={"host": sut_hostname}) if ep.host == "auto" else ep
+        for ep in cfg.endpoints
+    ]
+    return cfg.model_copy(update={"options": options, "endpoints": endpoints})
 
 
 def load_workload(path: Path) -> WorkloadConfig:

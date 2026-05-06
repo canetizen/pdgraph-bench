@@ -8,11 +8,15 @@ container plus one HugeGraph server container that points at the local
 Cassandra node. Tier-2 systems share the storage cluster (a single Cassandra
 ring), but the JanusGraph and HugeGraph keyspaces are distinct, so they can
 be brought up sequentially without data interference.
+
+Co-located nodes: same single-instance-per-hostname rule as the JanusGraph
+deployer (Cassandra cannot share a host with another Cassandra without IP
+aliasing).
 """
 
 from __future__ import annotations
 
-from graph_bench.orchestration.inventory import Inventory
+from graph_bench.orchestration.inventory import Inventory, NodeInfo
 from graph_bench.orchestration.plan import DeploymentPlan, HealthCheck, ServiceSpec
 
 
@@ -20,14 +24,26 @@ _CASSANDRA_IMAGE = "cassandra:4.1"
 _HUGEGRAPH_IMAGE = "hugegraph/hugegraph:1.3.0"
 
 
-def _cassandra_seeds(inventory: Inventory) -> str:
-    return ",".join(n.hostname for n in inventory.sut_nodes[:1])
+def _unique_host_sut_nodes(inventory: Inventory) -> list[NodeInfo]:
+    seen: set[str] = set()
+    picked: list[NodeInfo] = []
+    for node in inventory.sut_nodes:
+        if node.hostname in seen:
+            continue
+        seen.add(node.hostname)
+        picked.append(node)
+    return picked
 
 
-def _cassandra_service(host: str, seeds: str) -> ServiceSpec:
+def _cassandra_seeds(active_nodes: list[NodeInfo]) -> str:
+    return active_nodes[0].hostname if active_nodes else ""
+
+
+def _cassandra_service(node: NodeInfo, seeds: str) -> ServiceSpec:
+    host = node.hostname
     return ServiceSpec(
         name="cassandra",
-        container_name=f"gb-{host}-cassandra",
+        container_name=f"gb-{node.name}-cassandra",
         image=_CASSANDRA_IMAGE,
         env={
             "CASSANDRA_CLUSTER_NAME": "graph-bench",
@@ -42,7 +58,7 @@ def _cassandra_service(host: str, seeds: str) -> ServiceSpec:
             "HEAP_NEWSIZE": "256M",
         },
         volumes=(
-            (f"./gb-data/{host}/cassandra", "/var/lib/cassandra"),
+            (f"./gb-data/{node.name}/cassandra", "/var/lib/cassandra"),
         ),
         healthcheck=HealthCheck(
             test=["CMD-SHELL", "nodetool status | grep -q 'UN' || exit 1"],
@@ -54,28 +70,46 @@ def _cassandra_service(host: str, seeds: str) -> ServiceSpec:
     )
 
 
-def _hugegraph_service(host: str, cassandra_seed: str) -> ServiceSpec:
+def _hugegraph_service(node: NodeInfo, cassandra_seed: str) -> ServiceSpec:
+    # The official image's entrypoint reads conf/graphs/hugegraph.properties
+    # at startup; the default backend is RocksDB and there are no env vars to
+    # switch backends. We patch the file in-place before invoking the original
+    # entrypoint chain (`/usr/bin/dumb-init -- ./docker-entrypoint.sh`).
+    host = node.hostname
+    patch_cmd = (
+        "set -e; cd /hugegraph-server; "
+        # Drop the init flag so init-store.sh runs every fresh bring-up; if a
+        # previous attempt failed mid-way the flag would otherwise short-circuit
+        # subsequent runs and leave the graph keyspace half-initialised.
+        "rm -f docker/init_complete; "
+        "sed -ri "
+        "'s/^backend\\s*=.*/backend=cassandra/; "
+        " s/^serializer\\s*=.*/serializer=cassandra/' "
+        "conf/graphs/hugegraph.properties; "
+        f"grep -q '^cassandra.host' conf/graphs/hugegraph.properties || "
+        f"echo 'cassandra.host={cassandra_seed}' >> conf/graphs/hugegraph.properties; "
+        "grep -q '^cassandra.port' conf/graphs/hugegraph.properties || "
+        "echo 'cassandra.port=9042' >> conf/graphs/hugegraph.properties; "
+        "exec /usr/bin/dumb-init -- ./docker-entrypoint.sh"
+    )
     return ServiceSpec(
         name="hugegraph",
-        container_name=f"gb-{host}-hugegraph",
+        container_name=f"gb-{node.name}-hugegraph",
         image=_HUGEGRAPH_IMAGE,
-        env={
-            "BACKEND": "cassandra",
-            "HOST": host,
-            "STORE": "hugegraph",
-            "AUTH": "false",
-            "GRAPH_NAME": "hugegraph",
-            "CASSANDRA_HOST": cassandra_seed,
-            "CASSANDRA_PORT": "9042",
-        },
+        entrypoint=("sh", "-c"),
+        command=(patch_cmd,),
+        depends_on={"cassandra": "service_healthy"},
+        # Root inside the container, so volume permissions don't fight us.
         volumes=(
-            (f"./gb-data/{host}/hugegraph", "/hugegraph-server/hugegraph"),
+            (f"./gb-data/{node.name}/hugegraph", "/hugegraph-server/data"),
         ),
+        # HugeGraph 1.3.0 exposes graphs at `/graphs` (NOT `/apis/graphs`) —
+        # /apis returns the API map but the graph instances live one level up.
         healthcheck=HealthCheck(
-            test=["CMD", "curl", "-f", f"http://{host}:8080/apis/version"],
+            test=["CMD-SHELL", f"curl -sf http://{host}:8080/graphs > /dev/null || exit 1"],
             interval_s=15,
             timeout_s=10,
-            retries=10,
+            retries=20,
             start_period_s=180,
         ),
     )
@@ -85,16 +119,22 @@ class HugeGraphDeployer:
     sut_name = "hugegraph"
 
     def plan_initial(self, inventory: Inventory) -> DeploymentPlan:
-        seeds = _cassandra_seeds(inventory)
+        active = _unique_host_sut_nodes(inventory)
+        seeds = _cassandra_seeds(active)
         services_per_node: dict[str, list[ServiceSpec]] = {}
-        for node in inventory.sut_nodes:
-            host = node.hostname
-            services_per_node[host] = [
-                _cassandra_service(host, seeds),
-                _hugegraph_service(host, host),
+        for node in active:
+            services_per_node[node.name] = [
+                _cassandra_service(node, seeds),
+                _hugegraph_service(node, node.hostname),
             ]
         return DeploymentPlan(sut=self.sut_name, services_per_node=services_per_node)
 
     def plan_scaleout(self, inventory: Inventory, target: str) -> tuple[str, ServiceSpec]:
         node = inventory.by_name(target)
-        return node.hostname, _cassandra_service(node.hostname, _cassandra_seeds(inventory))
+        active = _unique_host_sut_nodes(inventory)
+        seeds = _cassandra_seeds(active)
+        return node.name, _cassandra_service(node, seeds)
+
+    def scale_out_endpoint(self, inventory: Inventory, target: str) -> str:
+        node = inventory.by_name(target)
+        return f"{node.hostname}:9042"

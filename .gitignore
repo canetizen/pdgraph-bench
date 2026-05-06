@@ -36,10 +36,15 @@ SKILL.md
 # Benchmark results — too large and runs are reproducible
 results/*
 !results/.gitkeep
+results-*/
+results-*-stdout.log
 
 # Generated datasets — regenerate from datagen
 data/generated/
 data/staging/
+
+# Per-node compose state created by SSHRunner.bring_up
+gb-data/
 
 # Credentials
 *.pem

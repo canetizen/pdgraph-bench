@@ -5,18 +5,24 @@
 
 `SSHRunner` translates each per-node service list into a Docker-Compose
 project, pushes it to that node via SCP, and runs `docker compose up -d`.
-Local mode (where `hostname` is `localhost` or `127.0.0.1`) is supported by
-falling back to a local subprocess invocation, so that the same code path
-exercises both the local docker-compose simulation and any remote multi-node
-cluster — the only difference between the two is the inventory.
+
+There is one code path for both production (multi-host) and the single-host
+playground: every node — including localhost — is reached through fabric's
+`Connection`. The playground requires a working sshd + authorised self-key
+on the orchestrator host so that `localhost` is reachable the same way a
+real cluster node would be. This keeps prod and playground bit-for-bit
+equivalent at the orchestration layer.
+
+Compose projects are namespaced per `(sut, logical-node-name)` so that two
+logical nodes sharing a host (playground) get distinct project directories
+and distinct `name:` fields, and `docker compose down` for one does not
+disturb the other.
 """
 
 from __future__ import annotations
 
 import io
 import shlex
-import subprocess
-from pathlib import Path
 from typing import TYPE_CHECKING, Iterator
 
 import yaml
@@ -31,38 +37,37 @@ if TYPE_CHECKING:
 _log = get_logger(__name__)
 
 
-_LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+# Deploy root for compose projects on every node. Kept dotsuz under $HOME so
+# that snap-confined Docker daemons (which only see non-dotted paths under
+# the user's home) can read the rendered compose file.
+_DEFAULT_DEPLOY_ROOT = "~/gb-deploy"
 
 
-def _is_local(node: NodeInfo) -> bool:
-    return node.hostname in _LOCAL_HOSTS or node.ip in _LOCAL_HOSTS
-
-
-def render_compose(sut: str, services: list[ServiceSpec]) -> str:
+def render_compose(sut: str, node_name: str, services: list[ServiceSpec]) -> str:
     """Render a list of `ServiceSpec`s into a docker-compose YAML string."""
     body: dict[str, object] = {
-        "name": f"gb-{sut}",
+        "name": f"gb-{sut}-{node_name}",
         "services": {svc.name: svc.to_compose_service() for svc in services},
     }
     return yaml.safe_dump(body, sort_keys=False)
 
 
 class SSHRunner:
-    """Executes a `DeploymentPlan` via SSH (or locally for the dev cluster)."""
+    """Executes a `DeploymentPlan` via SSH (fabric Connection per node)."""
 
-    def __init__(self, inventory: Inventory, *, deploy_root: str = "~/.gb-deploy") -> None:
+    def __init__(self, inventory: Inventory, *, deploy_root: str = _DEFAULT_DEPLOY_ROOT) -> None:
         self._inventory = inventory
         self._deploy_root = deploy_root
 
     # ------------------------------------------------------------------ helpers
-    def _node_for_hostname(self, hostname: str) -> NodeInfo:
+    def _node_by_name(self, name: str) -> NodeInfo:
         for n in self._inventory.nodes:
-            if n.hostname == hostname or n.name == hostname:
+            if n.name == name:
                 return n
-        raise KeyError(f"hostname {hostname!r} not in inventory")
+        raise KeyError(f"node {name!r} not in inventory")
 
     def _connection(self, node: NodeInfo) -> "Connection":
-        # Lazy import so that `pip install graph-bench[deploy]` is required
+        # Lazy import so that `pip install pdgraph-bench[deploy]` is required
         # only when SSH execution is needed.
         from fabric import Connection
         kwargs: dict[str, object] = {}
@@ -70,47 +75,62 @@ class SSHRunner:
             kwargs["user"] = node.ssh_user
         return Connection(host=node.hostname, **kwargs)
 
-    def _project_dir(self, sut: str) -> str:
-        return f"{self._deploy_root}/{sut}"
+    def _project_dir(self, sut: str, node_name: str) -> str:
+        return f"{self._deploy_root}/{sut}/{node_name}"
 
     # ------------------------------------------------------------------ actions
     def bring_up(self, plan: DeploymentPlan) -> None:
         """Push compose + start services on every node in the plan."""
-        for hostname, services in plan.services_per_node.items():
-            node = self._node_for_hostname(hostname)
-            compose_yaml = render_compose(plan.sut, services)
+        for node_name, services in plan.services_per_node.items():
+            node = self._node_by_name(node_name)
+            compose_yaml = render_compose(plan.sut, node_name, services)
             _log.info("orchestration_bring_up", node=node.name, services=[s.name for s in services])
-            self._push_and_up(node, plan.sut, compose_yaml)
+            self._push_and_up(node, plan.sut, node_name, compose_yaml)
 
     def tear_down(self, plan: DeploymentPlan) -> None:
-        for hostname in plan.services_per_node:
-            node = self._node_for_hostname(hostname)
+        # Tear down the per-(sut, node) projects from `plan_initial` …
+        for node_name in plan.services_per_node:
+            node = self._node_by_name(node_name)
             _log.info("orchestration_tear_down", node=node.name)
-            self._compose_command(node, plan.sut, "down -v --remove-orphans")
+            self._compose_command(node, plan.sut, node_name, "down -v --remove-orphans")
+        # … and any scale-out projects that may have been added at runtime
+        # for reserve nodes. The project name is `<reserve-node>-scaleout`.
+        for node in self._inventory.reserve_nodes:
+            scaleout_id = f"{node.name}-scaleout"
+            _log.info("orchestration_tear_down_scaleout", node=node.name)
+            self._compose_command(node, plan.sut, scaleout_id, "down -v --remove-orphans")
+        # Finally wipe any bind-mounted state directories the deployers laid
+        # down. We do this through a throwaway alpine container because the
+        # paths are root-owned (Docker bind mounts) and the SSH user usually
+        # cannot rm them directly.
+        for node_name in plan.services_per_node:
+            node = self._node_by_name(node_name)
+            self._wipe_state(node, plan.sut, node_name)
+        for node in self._inventory.reserve_nodes:
+            self._wipe_state(node, plan.sut, f"{node.name}-scaleout")
 
     def add_service(self, plan_node: str, sut: str, service: ServiceSpec) -> None:
-        """Bring a single service up on `plan_node` (used for scale-out)."""
-        node = self._node_for_hostname(plan_node)
-        compose_yaml = render_compose(sut, [service])
+        """Bring a single service up on `plan_node` (used for scale-out).
+
+        `plan_node` is the logical node name (e.g. `node5`); the project name
+        is suffixed with `-scaleout` so it doesn't collide with the node's
+        baseline project (which a Tier-2 node may not even have).
+        """
+        node = self._node_by_name(plan_node)
+        scaleout_node_id = f"{plan_node}-scaleout"
+        compose_yaml = render_compose(sut, scaleout_node_id, [service])
         _log.info(
             "orchestration_scale_out",
             node=node.name,
             service=service.name,
         )
-        self._push_and_up(node, f"{sut}-scaleout", compose_yaml)
+        self._push_and_up(node, sut, scaleout_node_id, compose_yaml)
 
     # ------------------------------------------------------------------ I/O
-    def _push_and_up(self, node: NodeInfo, sut: str, compose_yaml: str) -> None:
-        project_dir = self._project_dir(sut)
-        if _is_local(node):
-            local_dir = Path(project_dir.replace("~", str(Path.home())))
-            local_dir.mkdir(parents=True, exist_ok=True)
-            (local_dir / "compose.yaml").write_text(compose_yaml)
-            subprocess.run(
-                ["docker", "compose", "-f", str(local_dir / "compose.yaml"), "up", "-d"],
-                check=True,
-            )
-            return
+    def _push_and_up(
+        self, node: NodeInfo, sut: str, node_name: str, compose_yaml: str
+    ) -> None:
+        project_dir = self._project_dir(sut, node_name)
         with self._connection(node) as conn:
             conn.run(f"mkdir -p {shlex.quote(project_dir)}", hide=True)
             conn.put(io.StringIO(compose_yaml), remote=f"{project_dir}/compose.yaml")
@@ -118,24 +138,31 @@ class SSHRunner:
                 f"cd {shlex.quote(project_dir)} && docker compose -f compose.yaml up -d",
             )
 
-    def _compose_command(self, node: NodeInfo, sut: str, args: str) -> None:
-        project_dir = self._project_dir(sut)
-        if _is_local(node):
-            local_dir = Path(project_dir.replace("~", str(Path.home())))
-            if not (local_dir / "compose.yaml").exists():
-                return
-            subprocess.run(
-                ["docker", "compose", "-f", str(local_dir / "compose.yaml"), *shlex.split(args)],
-                check=False,
-            )
-            return
+    def _compose_command(
+        self, node: NodeInfo, sut: str, node_name: str, args: str
+    ) -> None:
+        project_dir = self._project_dir(sut, node_name)
         with self._connection(node) as conn:
             conn.run(
                 f"cd {shlex.quote(project_dir)} && docker compose -f compose.yaml {args}",
                 warn=True,
+                hide=True,
+            )
+
+    def _wipe_state(self, node: NodeInfo, sut: str, node_name: str) -> None:
+        """Delete the per-(sut, node) bind-mount data via a one-shot alpine
+        container, since the directories are root-owned by the docker daemon."""
+        project_dir = self._project_dir(sut, node_name)
+        with self._connection(node) as conn:
+            conn.run(
+                f"if [ -d {shlex.quote(project_dir + '/gb-data')} ]; then "
+                f"docker run --rm -v {shlex.quote(project_dir)}:/work alpine "
+                f"sh -c 'rm -rf /work/gb-data'; fi",
+                warn=True,
+                hide=True,
             )
 
     # ------------------------------------------------------------------ misc
     def each_node(self, plan: DeploymentPlan) -> Iterator[tuple[NodeInfo, list[ServiceSpec]]]:
-        for hostname, services in plan.services_per_node.items():
-            yield self._node_for_hostname(hostname), services
+        for node_name, services in plan.services_per_node.items():
+            yield self._node_by_name(node_name), services
