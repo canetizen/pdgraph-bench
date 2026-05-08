@@ -83,6 +83,10 @@ class ServiceSpec:
     as Compose's long-form `depends_on:`. Lets a service hold off start-up
     until a peer in the same compose project is ready."""
 
+    user: str | None = None
+    """Override the container's UID/GID (e.g. `"0:0"` for root). Useful when
+    the image's default user can't write to the host-bind-mounted directories."""
+
     def to_compose_service(self) -> dict[str, object]:
         body: dict[str, object] = {
             "image": self.image,
@@ -107,6 +111,8 @@ class ServiceSpec:
             body["depends_on"] = {
                 svc: {"condition": cond} for svc, cond in self.depends_on.items()
             }
+        if self.user is not None:
+            body["user"] = self.user
         return body
 
 

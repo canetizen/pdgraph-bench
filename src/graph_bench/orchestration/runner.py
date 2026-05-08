@@ -39,8 +39,10 @@ _log = get_logger(__name__)
 
 # Deploy root for compose projects on every node. Kept dotsuz under $HOME so
 # that snap-confined Docker daemons (which only see non-dotted paths under
-# the user's home) can read the rendered compose file.
-_DEFAULT_DEPLOY_ROOT = "~/gb-deploy"
+# the user's home) can read the rendered compose file. Using `$HOME` (not
+# `~`) means `shlex.quote` does not break tilde expansion — quoted `~`
+# stays literal under sh/bash, which would create a directory called `~`.
+_DEFAULT_DEPLOY_ROOT = "$HOME/gb-deploy"
 
 
 def render_compose(sut: str, node_name: str, services: list[ServiceSpec]) -> str:
@@ -132,10 +134,18 @@ class SSHRunner:
     ) -> None:
         project_dir = self._project_dir(sut, node_name)
         with self._connection(node) as conn:
-            conn.run(f"mkdir -p {shlex.quote(project_dir)}", hide=True)
-            conn.put(io.StringIO(compose_yaml), remote=f"{project_dir}/compose.yaml")
+            # No shlex.quote: project_dir contains `$HOME` which the remote
+            # shell must expand. shlex.quote wraps it in single quotes and
+            # `$` stays literal. Path content is benchmark-controlled
+            # ([a-z0-9-_/$]) so injection risk is nil.
+            conn.run(f"mkdir -p {project_dir}", hide=True)
+            # SFTP put cannot expand $HOME, so resolve it once via the same
+            # connection and substitute manually for the upload.
+            home = conn.run("echo $HOME", hide=True).stdout.strip()
+            remote_path = project_dir.replace("$HOME", home)
+            conn.put(io.StringIO(compose_yaml), remote=f"{remote_path}/compose.yaml")
             conn.run(
-                f"cd {shlex.quote(project_dir)} && docker compose -f compose.yaml up -d",
+                f"cd {project_dir} && docker compose -f compose.yaml up -d",
             )
 
     def _compose_command(
@@ -144,7 +154,7 @@ class SSHRunner:
         project_dir = self._project_dir(sut, node_name)
         with self._connection(node) as conn:
             conn.run(
-                f"cd {shlex.quote(project_dir)} && docker compose -f compose.yaml {args}",
+                f"cd {project_dir} && docker compose -f compose.yaml {args}",
                 warn=True,
                 hide=True,
             )
@@ -154,9 +164,11 @@ class SSHRunner:
         container, since the directories are root-owned by the docker daemon."""
         project_dir = self._project_dir(sut, node_name)
         with self._connection(node) as conn:
+            home = conn.run("echo $HOME", hide=True).stdout.strip()
+            resolved = project_dir.replace("$HOME", home)
             conn.run(
-                f"if [ -d {shlex.quote(project_dir + '/gb-data')} ]; then "
-                f"docker run --rm -v {shlex.quote(project_dir)}:/work alpine "
+                f"if [ -d {resolved}/gb-data ]; then "
+                f"docker run --rm -v {resolved}:/work alpine "
                 f"sh -c 'rm -rf /work/gb-data'; fi",
                 warn=True,
                 hide=True,

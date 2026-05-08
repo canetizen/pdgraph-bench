@@ -1,0 +1,19 @@
+# Created by: Mustafa Can Caliskan
+# Date: 2026-05-08
+#
+# OrientDB endpoint. `host: auto` resolves to the first sut node's hostname
+# from configs/inventory/cluster.yaml. The deployer enables Hazelcast multi-
+# master clustering; the driver/loader connect to the first node's REST port
+# (2480) and OrientDB transparently routes writes through the leader.
+
+name: orientdb
+image: orientdb:3.2
+endpoints:
+  - host: auto
+    port: 2480
+options:
+  host: auto
+  port: 2480
+  database: snb
+  user: root
+  password: rootpwd

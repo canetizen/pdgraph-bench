@@ -36,10 +36,11 @@ from graph_bench.workloads.snb_iv2.schema import EdgeType, ForeignKey, Property,
 class LdbcDatasetLayout:
     """Resolves a `csv_subdir` to a list of part files.
 
-    `mode` is `"interactive"` or `"bi"`; it selects between
-    ``graphs/csv/interactive/composite-merged-fk/`` and
-    ``graphs/csv/bi/composite-merged-fk/``. The two trees are otherwise
-    identical for the entities Tier-1 queries touch.
+    `mode` is `"interactive"` or `"bi"`. The two trees diverge:
+    - interactive: ``graphs/csv/interactive/composite-merged-fk/{dynamic,static}/<Entity>``
+    - bi:         ``graphs/csv/bi/composite-merged-fk/initial_snapshot/{dynamic,static}/<Entity>``
+                  (BI also emits `inserts/` and `deletes/` for delta batches —
+                  the loader reads only the initial snapshot for the bulk load.)
     """
 
     base: Path
@@ -47,7 +48,8 @@ class LdbcDatasetLayout:
 
     @property
     def root(self) -> Path:
-        return self.base / "graphs" / "csv" / self.mode / "composite-merged-fk"
+        base = self.base / "graphs" / "csv" / self.mode / "composite-merged-fk"
+        return base / "initial_snapshot" if self.mode == "bi" else base
 
     def part_files(self, csv_subdir: str) -> list[Path]:
         d = self.root / csv_subdir

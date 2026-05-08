@@ -19,7 +19,7 @@
 #
 # Usage:
 #   bash scripts/setup-cluster.sh <system> <workload> [<sf>]
-#       system   = nebulagraph | arangodb | dgraph | janusgraph | hugegraph
+#       system   = nebulagraph | arangodb | dgraph | memgraph | orientdb
 #       workload = snb_iv2 | snb_bi | finbench | synthetic_snb
 #       sf       = scale factor (default 1; ignored for synthetic_snb)
 #

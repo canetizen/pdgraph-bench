@@ -187,12 +187,18 @@ def _loader_cli_args(system: str, options: dict, inv, workload: str = "") -> lis
         # Dgraph loader uses --host/--port for alpha. Zero is contacted by
         # `add_node`/`cluster_status`; the SNB loader does not need it directly.
         pass
-    elif system == "janusgraph":
-        # No additional flags beyond host/port.
-        pass
-    elif system == "hugegraph":
-        if "graph" in options:
-            args.append(f"--graph {shlex.quote(str(options['graph']))}")
+    elif system == "memgraph":
+        if "user" in options:
+            args.append(f"--user {shlex.quote(str(options['user']))}")
+        if "password" in options:
+            args.append(f"--password {shlex.quote(str(options['password']))}")
+    elif system == "orientdb":
+        if "user" in options:
+            args.append(f"--user {shlex.quote(str(options['user']))}")
+        if "password" in options:
+            args.append(f"--password {shlex.quote(str(options['password']))}")
+        if "database" in options:
+            args.append(f"--database {shlex.quote(str(options['database']))}")
     return args
 
 
@@ -205,9 +211,10 @@ def _loader_module(system: str, workload: str) -> str:
         **{("nebulagraph", w): "data.loaders.ldbc_snb_nebulagraph" for w in iv2_or_bi},
         **{("arangodb", w): "data.loaders.ldbc_snb_arangodb" for w in iv2_or_bi},
         **{("dgraph", w): "data.loaders.ldbc_snb_dgraph" for w in iv2_or_bi},
-        # SNB IV2 — Tier 2 (Tier 2 only runs S1 = SNB Iv2)
-        ("janusgraph", "snb_iv2"): "data.loaders.ldbc_snb_janusgraph",
-        ("hugegraph", "snb_iv2"): "data.loaders.ldbc_snb_hugegraph",
+        # SNB IV2 / BI — Tier 2 (Memgraph + OrientDB; S1 only in the
+        # Tier-2 scenario set but loaders accept either dataset variant).
+        **{("memgraph", w): "data.loaders.ldbc_snb_memgraph" for w in iv2_or_bi},
+        **{("orientdb", w): "data.loaders.ldbc_snb_orientdb" for w in iv2_or_bi},
         # FinBench — Tier 1 only
         ("nebulagraph", "finbench"): "data.loaders.ldbc_finbench_nebulagraph",
         ("arangodb", "finbench"): "data.loaders.ldbc_finbench_arangodb",

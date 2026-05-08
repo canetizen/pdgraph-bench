@@ -9,9 +9,9 @@ from graph_bench.orchestration import Inventory, NodeInfo, render_compose
 from graph_bench.orchestration.deployers import (
     ArangoDBDeployer,
     DgraphDeployer,
-    HugeGraphDeployer,
-    JanusGraphDeployer,
+    MemgraphDeployer,
     NebulaGraphDeployer,
+    OrientDBDeployer,
 )
 
 
@@ -95,33 +95,38 @@ def test_dgraph_port_offset_when_co_located() -> None:
         assert f"--port_offset={offset}" in zero.command
 
 
-def test_janusgraph_plan_includes_cassandra() -> None:
-    plan = JanusGraphDeployer().plan_initial(_five_node_inv())
+def test_memgraph_plan_one_per_sut() -> None:
+    plan = MemgraphDeployer().plan_initial(_five_node_inv())
     assert set(plan.services_per_node) == {"node2", "node3", "node4"}
     for services in plan.services_per_node.values():
-        names = {s.name for s in services}
-        assert names == {"cassandra", "janusgraph"}
+        assert {s.name for s in services} == {"memgraph"}
 
 
-def test_janusgraph_collapses_to_one_node_on_single_host() -> None:
-    """Cassandra cannot share a host with another Cassandra without IP aliasing,
-    so the playground inventory must yield exactly one (cassandra, janusgraph)
-    pair."""
-    plan = JanusGraphDeployer().plan_initial(_single_host_inv())
-    assert set(plan.services_per_node) == {"node2"}
+def test_memgraph_port_offset_when_co_located() -> None:
+    plan = MemgraphDeployer().plan_initial(_single_host_inv())
+    bolt_ports: list[str] = []
+    for node_name in ("node2", "node3", "node4"):
+        svc = plan.services_per_node[node_name][0]
+        bolt_ports.append([c for c in svc.command if c.startswith("--bolt-port=")][0])
+    assert bolt_ports == ["--bolt-port=7687", "--bolt-port=7697", "--bolt-port=7707"]
 
 
-def test_hugegraph_plan_includes_cassandra() -> None:
-    plan = HugeGraphDeployer().plan_initial(_five_node_inv())
+def test_orientdb_plan_one_per_sut() -> None:
+    plan = OrientDBDeployer().plan_initial(_five_node_inv())
     assert set(plan.services_per_node) == {"node2", "node3", "node4"}
     for services in plan.services_per_node.values():
-        names = {s.name for s in services}
-        assert names == {"cassandra", "hugegraph"}
+        assert {s.name for s in services} == {"orientdb"}
 
 
-def test_hugegraph_collapses_to_one_node_on_single_host() -> None:
-    plan = HugeGraphDeployer().plan_initial(_single_host_inv())
-    assert set(plan.services_per_node) == {"node2"}
+def test_orientdb_distributed_entrypoint() -> None:
+    """OrientDB must launch via `dserver.sh` (not `server.sh`) for Hazelcast
+    cluster mode; otherwise the three nodes never gossip + form a quorum."""
+    plan = OrientDBDeployer().plan_initial(_single_host_inv())
+    for services in plan.services_per_node.values():
+        svc = services[0]
+        assert svc.entrypoint is not None
+        assert "dserver.sh" in svc.entrypoint[0]
+        assert svc.env.get("ORIENTDB_DISTRIBUTED") == "true"
 
 
 def test_render_compose_emits_yaml() -> None:

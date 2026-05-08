@@ -46,6 +46,13 @@ data/staging/
 # Per-node compose state created by SSHRunner.bring_up
 gb-data/
 
+# Terraform local state (provider plugins, .tfstate; large + machine-specific)
+deploy/terraform/**/.terraform/
+deploy/terraform/**/.terraform.lock.hcl
+deploy/terraform/**/*.tfstate
+deploy/terraform/**/*.tfstate.backup
+deploy/terraform/**/*.tfvars
+
 # Credentials
 *.pem
 *.key

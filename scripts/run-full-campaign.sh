@@ -86,7 +86,20 @@ warn()  { printf '\033[1;33m⚠\033[0m %s\n' "$*" | tee -a "$CAMPAIGN_LOG"; }
 fail()  { printf '\033[1;31m✗\033[0m %s\n' "$*" | tee -a "$CAMPAIGN_LOG" "$FAILURE_LOG"; }
 
 TIER1_SUTS=(nebulagraph arangodb dgraph)
-TIER2_SUTS=(janusgraph hugegraph)
+TIER2_SUTS=(memgraph orientdb)
+
+# Optional SUT filter — `SUTS=janusgraph,hugegraph bash run-full-campaign.sh ...`
+# trims the campaign down to those SUTs only. Empty = run everything.
+if [[ -n "${SUTS:-}" ]]; then
+    IFS=',' read -ra _filter <<< "$SUTS"
+    _filtered_t1=(); _filtered_t2=()
+    for f in "${_filter[@]}"; do
+        for s in "${TIER1_SUTS[@]}"; do [[ "$s" == "$f" ]] && _filtered_t1+=("$s"); done
+        for s in "${TIER2_SUTS[@]}"; do [[ "$s" == "$f" ]] && _filtered_t2+=("$s"); done
+    done
+    TIER1_SUTS=("${_filtered_t1[@]}")
+    TIER2_SUTS=("${_filtered_t2[@]}")
+fi
 
 # Scenarios per tier. Tier-2 only S1 because of backend complexity.
 TIER1_SCENARIOS=(s1 s2 s3 s4 s5)
@@ -181,8 +194,17 @@ per_sut() {
     fi
     ok "$sut bring-up requested"
 
-    note "wait 60 s for $sut cluster initialisation"
-    sleep 60
+    # Tier-2 SUTs (JanusGraph/HugeGraph) sit on Cassandra which needs longer
+    # to come up + run its schema migration before the application daemon
+    # can talk to it. Tier-1 SUTs are ready in ~60s.
+    case "$sut" in
+        # OrientDB Hazelcast cluster takes ~60-90s to gossip + elect a leader.
+        orientdb) wait_s=120 ;;
+        memgraph) wait_s=30  ;;
+        *)        wait_s=60  ;;
+    esac
+    note "wait ${wait_s} s for $sut cluster initialisation"
+    sleep "$wait_s"
 
     # Determine which workloads this SUT will load (from its scenario set).
     local needed_workloads=()

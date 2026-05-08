@@ -12,9 +12,9 @@ from __future__ import annotations
 
 from graph_bench.orchestration.deployers.arangodb import ArangoDBDeployer
 from graph_bench.orchestration.deployers.dgraph import DgraphDeployer
-from graph_bench.orchestration.deployers.hugegraph import HugeGraphDeployer
-from graph_bench.orchestration.deployers.janusgraph import JanusGraphDeployer
+from graph_bench.orchestration.deployers.memgraph import MemgraphDeployer
 from graph_bench.orchestration.deployers.nebulagraph import NebulaGraphDeployer
+from graph_bench.orchestration.deployers.orientdb import OrientDBDeployer
 from graph_bench.orchestration.plan import Deployer
 
 
@@ -22,8 +22,8 @@ _DEPLOYERS: dict[str, Deployer] = {
     NebulaGraphDeployer.sut_name: NebulaGraphDeployer(),
     ArangoDBDeployer.sut_name: ArangoDBDeployer(),
     DgraphDeployer.sut_name: DgraphDeployer(),
-    JanusGraphDeployer.sut_name: JanusGraphDeployer(),
-    HugeGraphDeployer.sut_name: HugeGraphDeployer(),
+    MemgraphDeployer.sut_name: MemgraphDeployer(),
+    OrientDBDeployer.sut_name: OrientDBDeployer(),
 }
 
 
@@ -41,9 +41,9 @@ def known_systems() -> list[str]:
 __all__ = [
     "ArangoDBDeployer",
     "DgraphDeployer",
-    "HugeGraphDeployer",
-    "JanusGraphDeployer",
+    "MemgraphDeployer",
     "NebulaGraphDeployer",
+    "OrientDBDeployer",
     "get_deployer",
     "known_systems",
 ]

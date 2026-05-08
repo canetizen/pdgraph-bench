@@ -15,10 +15,10 @@ concrete module first.
 from graph_bench.drivers import (  # noqa: F401 — side-effect registration
     arangodb,
     dgraph,
-    hugegraph,
-    janusgraph,
+    memgraph,
     mock,
     nebulagraph,
+    orientdb,
 )
 from graph_bench.drivers.mock import MockDriver
 from graph_bench.drivers.registry import DriverRegistry, get_driver

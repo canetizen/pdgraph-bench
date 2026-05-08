@@ -32,13 +32,11 @@ drivers = [
     "nebula3-python>=3.5",
     "python-arango>=7.9",
     "pydgraph>=21.3",
-    # gremlinpython 3.7+ swaps the WebSocket transport from Tornado to aiohttp
-    # and runs `asyncio.run` internally; calling `submit().result()` from any
-    # context that already has an asyncio loop (the harness workers, the
-    # driver wrapper) then raises "Cannot run the event loop while another
-    # loop is running". 3.6 keeps the older Tornado transport which co-exists
-    # with the harness loop.
-    "gremlinpython>=3.6,<3.7",
+    # Memgraph speaks the Bolt protocol — same wire format as Neo4j, so the
+    # official `neo4j` Python driver works unchanged.
+    "neo4j>=5.20",
+    # OrientDB: REST API talked via httpx (binary `pyorient` is unmaintained
+    # and Python 3.12-incompatible, so we go through HTTP/JSON).
     "httpx>=0.27",
 ]
 deploy = [
