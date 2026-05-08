@@ -152,8 +152,9 @@ uv run fab --search-root deploy/fabric generate-data --workload="$WORKLOAD" --sf
 ok "dataset generated"
 
 note "loading $WORKLOAD into $SYSTEM"
+# `fab generate-data` writes to `data/generated/{workload}_sf{sf}` for every
+# workload (synthetic_snb included), so the loader path must match.
 DATASET_PATH="data/generated/${WORKLOAD}_sf${SF}"
-[ "$WORKLOAD" = "synthetic_snb" ] && DATASET_PATH="data/generated/synthetic_snb"
 uv run fab --search-root deploy/fabric load-data --system="$SYSTEM" --workload="$WORKLOAD" --dataset-path="$DATASET_PATH" --inventory="$INVENTORY"
 ok "data loaded"
 

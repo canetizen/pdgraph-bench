@@ -13,8 +13,8 @@ property-graph database systems:
 - **NebulaGraph** (nGQL)
 - **ArangoDB 3.11** (AQL)
 - **Dgraph** (DQL)
-- **JanusGraph** (Gremlin, Cassandra-backed)
-- **Apache HugeGraph** (Gremlin/REST, Cassandra-backed)
+- **Memgraph** (Cypher over Bolt)
+- **OrientDB** (OrientSQL over REST, Hazelcast-clustered)
 
 The benchmark draws its workload from publicly available LDBC components:
 
@@ -27,8 +27,10 @@ The benchmark draws its workload from publicly available LDBC components:
 Five scenarios are defined: `S1` transactional-only (cross-tier baseline),
 `S2` analytical-only, `S3` 70/20/10 mixed, `S4` financial transactional,
 `S5` mixed plus one scale-out event at *t* = 300 s into the measurement
-window. Three Tier-1 systems run all five scenarios; the two Tier-2 systems
-run `S1` only because of their backend deployment complexity.
+window. Three Tier-1 systems (NebulaGraph, ArangoDB, Dgraph) run all five
+scenarios; the two Tier-2 systems (Memgraph, OrientDB) run `S1` only,
+giving a transactional baseline against the single-node-per-process
+class without expanding the campaign cost beyond the time budget.
 
 The protocol is closed-loop, deterministically seeded per
 `(system, scenario, repetition)`, and produces per-request Parquet logs,
@@ -107,7 +109,7 @@ production uses.
    bash scripts/setup-cluster.sh nebulagraph snb_iv2 1
    #    setup-cluster.sh <system> <workload> [<scale-factor>]
    ```
-   `<system>` ∈ `nebulagraph` · `arangodb` · `dgraph` · `janusgraph` · `hugegraph`
+   `<system>` ∈ `nebulagraph` · `arangodb` · `dgraph` · `memgraph` · `orientdb`
    `<workload>` ∈ `snb_iv2` · `snb_bi` · `finbench` · `synthetic_snb`
 3. Run a scenario:
    ```bash

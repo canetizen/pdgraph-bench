@@ -38,6 +38,12 @@ from invoke import task
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_INVENTORY = REPO_ROOT / "configs" / "inventory" / "cluster.yaml"
 
+# Loader/validator/datagen invocations go through `uv run` so the project's
+# pinned dep set (drivers, neo4j, httpx, ...) is on the import path. Use the
+# absolute path to uv so it works under non-interactive SSH shells where
+# `~/.local/bin` is not on PATH.
+_PY = "$HOME/.local/bin/uv run --no-sync python3"
+
 
 def _load_inventory(inventory_path: Path):
     from graph_bench.orchestration import load_inventory
@@ -82,7 +88,7 @@ def generate_data(ctx, workload: str, sf: str = "1", out: str = "") -> None:
     target = out or f"data/generated/{workload}_sf{sf}"
     if workload == "synthetic_snb":
         # Synthetic generator runs in-process; SF is ignored, persons/avg-degree control size.
-        ctx.run(f"python -m data.generators.synthetic_snb --out {target}", pty=False)
+        ctx.run(f"{_PY} -m data.generators.synthetic_snb --out {target}", pty=False)
         return
     if workload in {"snb_iv2", "snb_bi"}:
         profile = "interactive" if workload == "snb_iv2" else "bi"
@@ -122,7 +128,7 @@ def load_data(ctx, system: str, workload: str, dataset_path: str = "",
     dataset = dataset_path or f"data/generated/{workload}"
     module = _loader_module(system, workload)
     cmd = (
-        f"python -m {module} --dataset {shlex.quote(dataset)} "
+        f"{_PY} -m {module} --dataset {shlex.quote(dataset)} "
         + " ".join(loader_args)
     )
 
@@ -242,7 +248,7 @@ def validate(ctx, system: str, dataset_path: str, workload: str = "synthetic_snb
              inventory: str = str(DEFAULT_INVENTORY)) -> None:
     sys_yaml = system_config or f"configs/systems/{system}.yaml"
     cmd = (
-        f"python -m data.validators.runner --system {system} "
+        f"{_PY} -m data.validators.runner --system {system} "
         f"--system-config {shlex.quote(sys_yaml)} "
         f"--workload {workload} "
         f"--dataset {shlex.quote(dataset_path)} "
