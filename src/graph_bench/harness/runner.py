@@ -209,9 +209,19 @@ class ScenarioRunner:
             for w in workers:
                 w.stop()
             # Drain workers so any in-flight request completes or times out.
-            await asyncio.gather(*tasks, return_exceptions=True)
+            results = await asyncio.gather(*tasks, return_exceptions=True)
             if scaleout_ctrl is not None:
                 scaleout_ctrl.cancel()
+
+        died = [(t.get_name(), r) for t, r in zip(tasks, results) if isinstance(r, BaseException)]
+        if died:
+            for name, exc in died:
+                _log.error("worker_task_died", task=name, error=f"{type(exc).__name__}: {exc}")
+            if len(died) == len(tasks):
+                raise RuntimeError(
+                    f"all {len(tasks)} workers died during {'measurement' if record else 'warmup'}: "
+                    f"first={type(died[0][1]).__name__}: {died[0][1]}"
+                )
 
         elapsed_s = (monotonic_ns() - start_ns) / 1e9
         _log.info(
@@ -219,6 +229,7 @@ class ScenarioRunner:
             recorded=record,
             elapsed_s=round(elapsed_s, 2),
             workers=ctx.spec.worker_count,
+            workers_died=len(died),
         )
 
 

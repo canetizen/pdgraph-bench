@@ -60,7 +60,25 @@ class Worker:
         while not self._stop.is_set():
             ref = self._scheduler.next_ref()
             params_iter = self._param_iters.get(ref)
-            params: dict[str, object] = next(params_iter) if params_iter is not None else {}
+            try:
+                params: dict[str, object] = (
+                    next(params_iter) if params_iter is not None else {}
+                )
+            except StopIteration:
+                _log.error(
+                    "worker_param_iter_exhausted", worker_id=self._id, ref=str(ref)
+                )
+                self._stop.set()
+                break
+            except Exception as exc:  # noqa: BLE001 — must surface, not silently die
+                _log.error(
+                    "worker_param_iter_exception",
+                    worker_id=self._id,
+                    ref=str(ref),
+                    error=f"{type(exc).__name__}: {exc}",
+                )
+                self._stop.set()
+                break
             req = QueryRequest(ref=ref, params=params)
 
             issued_wall = wall_ns()

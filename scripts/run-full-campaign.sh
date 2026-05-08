@@ -105,6 +105,19 @@ fi
 TIER1_SCENARIOS=(s1 s2 s3 s4 s5)
 TIER2_SCENARIOS=(s1)
 
+# Optional scenario filter — `SCENARIOS=s1,s3,s5 bash run-full-campaign.sh ...`
+# trims each tier's scenario list to the intersection. Empty = run all.
+if [[ -n "${SCENARIOS:-}" ]]; then
+    IFS=',' read -ra _scen_filter <<< "$SCENARIOS"
+    _filtered_t1_sc=(); _filtered_t2_sc=()
+    for f in "${_scen_filter[@]}"; do
+        for s in "${TIER1_SCENARIOS[@]}"; do [[ "$s" == "$f" ]] && _filtered_t1_sc+=("$s"); done
+        for s in "${TIER2_SCENARIOS[@]}"; do [[ "$s" == "$f" ]] && _filtered_t2_sc+=("$s"); done
+    done
+    TIER1_SCENARIOS=("${_filtered_t1_sc[@]}")
+    TIER2_SCENARIOS=("${_filtered_t2_sc[@]}")
+fi
+
 # Workloads needed across the campaign. Generated once per (sf, workload),
 # reused across SUTs to avoid recomputing the LDBC datagen output.
 WORKLOADS=(snb_iv2 snb_bi finbench)
@@ -135,11 +148,20 @@ run_one() {
     local sys_yaml="configs/systems/${sut}.yaml"
     local scen_yaml="configs/scenarios/${scenario}.yaml"
     local wl_yaml; wl_yaml="$(scenario_workload_yaml "$scenario")"
+    local workload; workload="$(scenario_workload "$scenario")"
+    local dataset_dir="${DATASET_PATH[$workload]}"
     local rid="${sut}-${scenario}-rep${rep}"
     local extra=()
     [ -n "$WARMUP" ]      && extra+=(--warmup-seconds "$WARMUP")
     [ -n "$MEASUREMENT" ] && extra+=(--measurement-seconds "$MEASUREMENT")
     [ -n "$WORKERS" ]     && extra+=(--worker-count "$WORKERS")
+    [ -n "$dataset_dir" ] && extra+=(--dataset-dir "$dataset_dir")
+    # snb_analytical (S2) is a composite workload over IV2 + BI: pass both
+    # dataset roots so the workload can synthesise IC* + Q* parameters.
+    if [ "$scenario" = "s2" ]; then
+        extra+=(--iv2-dataset-dir "${DATASET_PATH[snb_iv2]}")
+        extra+=(--bi-dataset-dir  "${DATASET_PATH[snb_bi]}")
+    fi
     note "run ${rid}"
     if uv run pdgraph-bench run "$scen_yaml" \
         --system "$sys_yaml" \
@@ -206,18 +228,25 @@ per_sut() {
     note "wait ${wait_s} s for $sut cluster initialisation"
     sleep "$wait_s"
 
-    # Determine which workloads this SUT will load (from its scenario set).
-    local needed_workloads=()
+    # Group scenarios by workload so each workload's scenarios run while
+    # *its* dataset is loaded. All SUTs use a single space that gets wiped
+    # by each new load, so loading every workload up-front would leave only
+    # the last-loaded one queryable. Instead: load workload → run all of
+    # its scenarios → load next workload → run those, etc.
+    local workload_order=()
+    declare -A workload_scenarios=()
     for scen in "${scenarios[@]}"; do
         local wl; wl="$(scenario_workload "$scen")"
-        if [[ ! " ${needed_workloads[*]} " =~ " $wl " ]]; then
-            needed_workloads+=("$wl")
+        if [[ ! " ${workload_order[*]} " =~ " $wl " ]]; then
+            workload_order+=("$wl")
+            workload_scenarios[$wl]=""
         fi
+        workload_scenarios[$wl]+="$scen "
     done
 
-    # Load each needed workload into this SUT.
-    for wl in "${needed_workloads[@]}"; do
+    for wl in "${workload_order[@]}"; do
         ensure_dataset "$wl" || continue
+
         note "load $wl into $sut"
         if ! uv run fab --search-root deploy/fabric load-data \
             --system="$sut" --workload="$wl" \
@@ -233,12 +262,12 @@ per_sut() {
             --system="$sut" --workload="$wl" \
             --dataset-path="${DATASET_PATH[$wl]}" \
             --inventory="$INVENTORY" 2>&1 | tee -a "$CAMPAIGN_LOG" || warn "$sut/$wl validator failed (non-fatal, scenarios still attempted)"
-    done
 
-    # Run every scenario × $REPETITIONS repetitions.
-    for scen in "${scenarios[@]}"; do
-        for ((rep=0; rep<REPETITIONS; rep++)); do
-            run_one "$sut" "$scen" "$rep" || true
+        # Run scenarios bound to this workload while its data is live.
+        for scen in ${workload_scenarios[$wl]}; do
+            for ((rep=0; rep<REPETITIONS; rep++)); do
+                run_one "$sut" "$scen" "$rep" || true
+            done
         done
     done
 

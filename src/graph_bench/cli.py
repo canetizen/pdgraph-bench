@@ -129,6 +129,21 @@ def run(
     ),
     repetition: int = typer.Option(0, "--repetition", min=0, help="Repetition index."),
     run_id: str | None = typer.Option(None, "--run-id", help="Override the auto-generated run id."),
+    dataset_dir: Path | None = typer.Option(
+        None, "--dataset-dir",
+        help="Override workload dataset/parameter directory. Injected into "
+             "workload options as `dataset_dir` (raw datagen output).",
+    ),
+    iv2_dataset_dir: Path | None = typer.Option(
+        None, "--iv2-dataset-dir",
+        help="Composite workloads (snb_analytical) need both an iv2 and a bi "
+             "dataset root; pass this in addition to --bi-dataset-dir.",
+    ),
+    bi_dataset_dir: Path | None = typer.Option(
+        None, "--bi-dataset-dir",
+        help="Composite workloads (snb_analytical) need both an iv2 and a bi "
+             "dataset root; pass this in addition to --iv2-dataset-dir.",
+    ),
 ) -> None:
     """Execute one repetition of a scenario and write results."""
     configure()
@@ -149,8 +164,20 @@ def run(
     system_cfg = load_system(system, sut_hostname=sut_hostname)
     workload_cfg = load_workload(workload)
 
+    workload_options: dict[str, object] = dict(workload_cfg.options)
+    # Promote yaml-level `parameter_source` into the factory's options dict so
+    # factories that look for `parameter_dir` still work without yaml churn.
+    if workload_cfg.parameter_source and "parameter_dir" not in workload_options:
+        workload_options["parameter_dir"] = workload_cfg.parameter_source
+    if dataset_dir is not None:
+        workload_options["dataset_dir"] = str(dataset_dir)
+    if iv2_dataset_dir is not None:
+        workload_options["iv2_dataset_dir"] = str(iv2_dataset_dir)
+    if bi_dataset_dir is not None:
+        workload_options["bi_dataset_dir"] = str(bi_dataset_dir)
+
     driver = DriverRegistry.create(scenario_cfg.system, system_cfg.options)
-    workload_impl = WorkloadRegistry.create(scenario_cfg.workload, workload_cfg.options)
+    workload_impl = WorkloadRegistry.create(scenario_cfg.workload, workload_options)
 
     rid = run_id or f"{scenario_cfg.system}-{scenario_cfg.id}-{repetition}-{uuid.uuid4().hex[:8]}"
     results_dir = results_root / rid
