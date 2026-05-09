@@ -19,23 +19,26 @@ NEBULAGRAPH: dict[str, str] = {
         "USE {space}; FETCH PROP ON `Account` {accountId} "
         "YIELD properties(vertex) AS props"
     ),
-    # SR2 — outbound transfers from account (limit 100).
+    # SR2 — outbound transfers from account (limit 100). Pipe is mandatory
+    # before LIMIT in nGQL; otherwise the parser treats LIMIT 100 as part
+    # of the YIELD expression list and rejects the integer with
+    # `'100' type must be LIST`.
     "SR2": (
         "USE {space}; "
         "GO FROM {accountId} OVER `TRANSFER` YIELD dst(edge) AS dst, "
-        "properties(edge).amount AS amount LIMIT 100"
+        "properties(edge).amount AS amount | LIMIT 100"
     ),
     # SR3 — inbound transfers to account.
     "SR3": (
         "USE {space}; "
         "GO FROM {accountId} OVER `TRANSFER` REVERSELY YIELD src(edge) AS src, "
-        "properties(edge).amount AS amount LIMIT 100"
+        "properties(edge).amount AS amount | LIMIT 100"
     ),
     # SR4 — 2-hop downstream account ids.
     "SR4": (
         "USE {space}; "
         "GO 2 STEPS FROM {accountId} OVER `TRANSFER` "
-        "YIELD DISTINCT dst(edge) AS dst LIMIT 100"
+        "YIELD DISTINCT dst(edge) AS dst | LIMIT 100"
     ),
     # SR5 — owning person/company.
     "SR5": (

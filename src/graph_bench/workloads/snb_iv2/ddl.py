@@ -65,6 +65,16 @@ def nebulagraph_ddl(space: str, partition_num: int = 30, replica_factor: int = 1
         if not body:
             body = "gb_p int"  # NebulaGraph requires at least one property.
         stmts.append(f"USE {space}; CREATE EDGE IF NOT EXISTS `{label}`({body})")
+
+    # Tag indices required by analytical queries that use LOOKUP on a
+    # non-id property (NebulaGraph rejects unindexed LOOKUPs at runtime).
+    # SNB BI Q1 filters posts by length, so an index on Post.length is
+    # mandatory; without it Q1 fails with "There is no index to use at
+    # runtime" on every request.
+    stmts.append(
+        f"USE {space}; CREATE TAG INDEX IF NOT EXISTS i_post_length "
+        f"ON `Post`(`length`)"
+    )
     return stmts
 
 
