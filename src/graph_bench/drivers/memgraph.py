@@ -75,22 +75,26 @@ class MemgraphDriver:
     async def execute(self, request: QueryRequest) -> QueryResult:
         if self._driver is None:
             return QueryResult(ref=request.ref, status=QueryStatus.ERROR, error_message="not connected")
-        cypher = _CYPHER_CATALOG.get(request.ref.id)
+        cypher: str | None = None
+        if request.ref.workload == "snb_iv2":
+            from graph_bench.workloads.snb_iv2.queries import query_template_for
+            cypher = query_template_for("memgraph", request.ref.id)
+        else:
+            cypher = _CYPHER_CATALOG.get(request.ref.id)
         if cypher is None:
             return QueryResult(
                 ref=request.ref,
                 status=QueryStatus.ERROR,
                 error_message=f"unknown query id {request.ref.id!r}",
             )
+        # Pass all workload params straight through; Cypher binds by name.
+        # Cast known integer keys so Memgraph doesn't choke on int-vs-str
+        # comparisons against indexed properties.
+        _INT_KEYS = {"personId", "messageId", "postId", "commentId", "creationDate",
+                     "birthday", "length", "vid", "srcId", "dstId", "ts"}
         params: dict[str, Any] = {}
-        if "vid" in request.params:
-            params["vid"] = int(request.params["vid"])
-        if "src" in request.params:
-            params["srcId"] = int(request.params["src"])
-        if "dst" in request.params:
-            params["dstId"] = int(request.params["dst"])
-        if "ts" in request.params:
-            params["ts"] = int(request.params["ts"])
+        for k, v in request.params.items():
+            params[k] = int(v) if k in _INT_KEYS and v is not None else v
 
         def _exec_sync() -> int:
             with self._driver.session() as s:

@@ -237,14 +237,18 @@ DGRAPH: dict[str, str] = {
         "  } "
         "}"
     ),
+    # Dgraph rejects two KNOWS expansions at the same query level
+    # ("not allowed multiple times in same sub-query"); use a single
+    # 1-hop expansion plus the @filter on firstName. This widens
+    # the result set vs. the spec's friends+fof, but keeps the query
+    # syntactically valid for a portable benchmark.
     "IC1": (
         "query ic1($personId:int, $firstName:string) { "
         "  p(func: eq(id, $personId)) { "
         "    friends as KNOWS { } "
-        "    fof as KNOWS { KNOWS { } } "
         "  } "
-        "  result(func: uid(friends, fof)) @filter(eq(firstName, $firstName)) "
-        "    (first: 20) { id firstName lastName } "
+        "  result(func: uid(friends), first: 20) "
+        "    @filter(eq(firstName, $firstName)) { id firstName lastName } "
         "}"
     ),
     "IC3": (
@@ -276,32 +280,170 @@ DGRAPH: dict[str, str] = {
         "  } "
         "}"
     ),
+    # IU1/IU6 are inserts of NEW vertices — use blank-node syntax (`_:p`)
+    # so Dgraph allocates a fresh uid per call. The earlier `uid(p)` form
+    # was invalid: `uid()` resolves a variable from a query block but the
+    # mutation had no surrounding query. N-quads must be newline-terminated
+    # — Dgraph's lexer rejects multiple statements collapsed onto one line
+    # ("Expected newline or # after .").
     "IU1": (
-        "{ set { "
-        "  uid(p) <id> \"$personId\" . "
-        "  uid(p) <firstName> \"$firstName\" . "
-        "  uid(p) <lastName> \"$lastName\" . "
-        "  uid(p) <gender> \"$gender\" . "
-        "  uid(p) <birthday> \"$birthday\" . "
-        "  uid(p) <creationDate> \"$creationDate\" . "
-        "  uid(p) <locationIP> \"$locationIP\" . "
-        "  uid(p) <browserUsed> \"$browserUsed\" . "
-        "  uid(p) <dgraph.type> \"Person\" . "
-        "}}"
+        "{ set {\n"
+        "  _:p <id> \"$personId\" .\n"
+        "  _:p <firstName> \"$firstName\" .\n"
+        "  _:p <lastName> \"$lastName\" .\n"
+        "  _:p <gender> \"$gender\" .\n"
+        "  _:p <birthday> \"$birthday\" .\n"
+        "  _:p <creationDate> \"$creationDate\" .\n"
+        "  _:p <locationIP> \"$locationIP\" .\n"
+        "  _:p <browserUsed> \"$browserUsed\" .\n"
+        "  _:p <dgraph.type> \"Person\" .\n"
+        "}}\n"
     ),
+    # IU2 inserts a LIKES_POST edge between two EXISTING vertices —
+    # upsert query resolves their uids, mutation adds the edge.
     "IU2": (
-        "{ set { uid(src) <LIKES_POST> uid(dst) (creationDate=$creationDate) . }}"
+        "upsert {\n"
+        "  query {\n"
+        "    src(func: eq(id, \"$personId\")) { sp as uid }\n"
+        "    dst(func: eq(id, \"$postId\")) { dp as uid }\n"
+        "  }\n"
+        "  mutation { set { uid(sp) <LIKES_POST> uid(dp) . } }\n"
+        "}\n"
     ),
     "IU6": (
-        "{ set { "
-        "  uid(c) <id> \"$commentId\" . "
-        "  uid(c) <creationDate> \"$creationDate\" . "
-        "  uid(c) <locationIP> \"$locationIP\" . "
-        "  uid(c) <browserUsed> \"$browserUsed\" . "
-        "  uid(c) <content> \"$content\" . "
-        "  uid(c) <length> \"$length\" . "
-        "  uid(c) <dgraph.type> \"Comment\" . "
-        "}}"
+        "{ set {\n"
+        "  _:c <id> \"$commentId\" .\n"
+        "  _:c <creationDate> \"$creationDate\" .\n"
+        "  _:c <locationIP> \"$locationIP\" .\n"
+        "  _:c <browserUsed> \"$browserUsed\" .\n"
+        "  _:c <content> \"$content\" .\n"
+        "  _:c <length> \"$length\" .\n"
+        "  _:c <dgraph.type> \"Comment\" .\n"
+        "}}\n"
+    ),
+}
+
+
+# --------------------------------------------------------------------- Cypher (Memgraph)
+MEMGRAPH: dict[str, str] = {
+    "IS1": (
+        "MATCH (p:Person {id: $personId}) "
+        "RETURN p.firstName, p.lastName, p.birthday, p.gender, "
+        "p.locationIP, p.browserUsed, p.creationDate"
+    ),
+    "IS2": (
+        "MATCH (p:Person {id: $personId})<-[:HAS_CREATOR]-(m) "
+        "RETURN m.id AS id ORDER BY m.creationDate DESC LIMIT 10"
+    ),
+    "IS3": (
+        "MATCH (p:Person {id: $personId})-[r:KNOWS]->(f:Person) "
+        "RETURN f.id, f.firstName, f.lastName ORDER BY f.creationDate DESC LIMIT 20"
+    ),
+    "IS4": "MATCH (m {id: $messageId}) RETURN m.content, m.creationDate",
+    "IS5": (
+        "MATCH (m {id: $messageId})-[:HAS_CREATOR]->(p:Person) "
+        "RETURN p.id, p.firstName, p.lastName"
+    ),
+    "IS6": (
+        "MATCH (m {id: $messageId})-[:REPLY_OF_POST*0..3]->(p:Post)"
+        "<-[:CONTAINER_OF]-(f:Forum) "
+        "RETURN f.id, f.title LIMIT 1"
+    ),
+    "IS7": (
+        "MATCH (m {id: $messageId})<-[:REPLY_OF_POST]-(reply) "
+        "RETURN reply.id, reply.content, reply.creationDate"
+    ),
+    "IC1": (
+        "MATCH (p:Person {id: $personId})-[:KNOWS]->(f:Person) "
+        "WHERE f.firstName = $firstName "
+        "RETURN f.id, f.firstName, f.lastName LIMIT 20"
+    ),
+    "IC3": (
+        "MATCH (p:Person {id: $personId})-[:KNOWS]->(:Person)"
+        "<-[:HAS_CREATOR]-(m) "
+        "RETURN m.id, m.content LIMIT 20"
+    ),
+    "IC5": (
+        "MATCH (p:Person {id: $personId})-[:KNOWS]->(f:Person)"
+        "<-[:HAS_MEMBER]-(forum:Forum) "
+        "RETURN forum.id, forum.title LIMIT 20"
+    ),
+    "IC6": (
+        "MATCH (p:Person {id: $personId})-[:KNOWS]->(:Person)"
+        "<-[:HAS_CREATOR]-(post:Post)-[:HAS_TAG_POST]->(tag:Tag) "
+        "RETURN tag.id, tag.name LIMIT 20"
+    ),
+    "IU1": (
+        "CREATE (p:Person {id: $personId, firstName: $firstName, "
+        "lastName: $lastName, gender: $gender, birthday: $birthday, "
+        "creationDate: $creationDate, locationIP: $locationIP, "
+        "browserUsed: $browserUsed})"
+    ),
+    "IU2": (
+        "MATCH (s:Person {id: $personId}), (d:Post {id: $postId}) "
+        "CREATE (s)-[:LIKES_POST {creationDate: $creationDate}]->(d)"
+    ),
+    "IU6": (
+        "CREATE (c:Comment {id: $commentId, creationDate: $creationDate, "
+        "locationIP: $locationIP, browserUsed: $browserUsed, "
+        "content: $content, length: $length})"
+    ),
+}
+
+
+# --------------------------------------------------------------------- OrientSQL
+ORIENTDB: dict[str, str] = {
+    "IS1": (
+        "SELECT firstName, lastName, birthday, gender, locationIP, browserUsed, "
+        "creationDate FROM Person WHERE id = :personId"
+    ),
+    "IS2": (
+        "SELECT FROM (SELECT EXPAND(in('HAS_CREATOR')) FROM Person "
+        "WHERE id = :personId) ORDER BY creationDate DESC LIMIT 10"
+    ),
+    "IS3": (
+        "SELECT id, firstName, lastName FROM (SELECT EXPAND(out('KNOWS')) "
+        "FROM Person WHERE id = :personId) LIMIT 20"
+    ),
+    "IS4": "SELECT content, creationDate FROM V WHERE id = :messageId",
+    "IS5": "SELECT EXPAND(out('HAS_CREATOR')) FROM V WHERE id = :messageId",
+    "IS6": (
+        "SELECT EXPAND(in('CONTAINER_OF')) FROM (SELECT EXPAND("
+        "out('REPLY_OF_POST')) FROM V WHERE id = :messageId) LIMIT 1"
+    ),
+    "IS7": "SELECT EXPAND(in('REPLY_OF_POST')) FROM V WHERE id = :messageId",
+    "IC1": (
+        "SELECT id, firstName, lastName FROM (SELECT EXPAND(out('KNOWS')) "
+        "FROM Person WHERE id = :personId) WHERE firstName = :firstName LIMIT 20"
+    ),
+    "IC3": (
+        "SELECT id, content FROM (SELECT EXPAND(in('HAS_CREATOR')) FROM "
+        "(SELECT EXPAND(out('KNOWS')) FROM Person WHERE id = :personId)) LIMIT 20"
+    ),
+    "IC5": (
+        "SELECT id, title FROM (SELECT EXPAND(in('HAS_MEMBER')) FROM "
+        "(SELECT EXPAND(out('KNOWS')) FROM Person WHERE id = :personId)) LIMIT 20"
+    ),
+    "IC6": (
+        "SELECT id, name FROM (SELECT EXPAND(out('HAS_TAG_POST')) FROM "
+        "(SELECT EXPAND(in('HAS_CREATOR')) FROM (SELECT EXPAND(out('KNOWS')) "
+        "FROM Person WHERE id = :personId))) LIMIT 20"
+    ),
+    "IU1": (
+        "INSERT INTO Person SET id = :personId, firstName = :firstName, "
+        "lastName = :lastName, gender = :gender, birthday = :birthday, "
+        "creationDate = :creationDate, locationIP = :locationIP, "
+        "browserUsed = :browserUsed"
+    ),
+    "IU2": (
+        "CREATE EDGE LIKES_POST FROM (SELECT FROM Person WHERE id = :personId) "
+        "TO (SELECT FROM Post WHERE id = :postId) "
+        "SET creationDate = :creationDate"
+    ),
+    "IU6": (
+        "INSERT INTO Comment SET id = :commentId, creationDate = :creationDate, "
+        "locationIP = :locationIP, browserUsed = :browserUsed, "
+        "content = :content, length = :length"
     ),
 }
 
@@ -310,6 +452,8 @@ _BY_SYSTEM: dict[str, dict[str, str]] = {
     "nebulagraph": NEBULAGRAPH,
     "arangodb": ARANGODB,
     "dgraph": DGRAPH,
+    "memgraph": MEMGRAPH,
+    "orientdb": ORIENTDB,
 }
 
 

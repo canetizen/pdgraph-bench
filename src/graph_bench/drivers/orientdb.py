@@ -80,21 +80,25 @@ class OrientDBDriver:
     async def execute(self, request: QueryRequest) -> QueryResult:
         if self._client is None:
             return QueryResult(ref=request.ref, status=QueryStatus.ERROR, error_message="not connected")
-        sql = _OSQL_CATALOG.get(request.ref.id)
+        sql: str | None = None
+        if request.ref.workload == "snb_iv2":
+            from graph_bench.workloads.snb_iv2.queries import query_template_for
+            sql = query_template_for("orientdb", request.ref.id)
+        else:
+            sql = _OSQL_CATALOG.get(request.ref.id)
         if sql is None:
             return QueryResult(
                 ref=request.ref, status=QueryStatus.ERROR,
                 error_message=f"unknown query id {request.ref.id!r}",
             )
+        # Pass workload params straight through; OrientSQL binds by name with
+        # `:param`. Cast known integer keys.
+        _INT_KEYS = {"personId", "messageId", "postId", "commentId",
+                     "creationDate", "birthday", "length", "vid", "srcId",
+                     "dstId", "ts"}
         params: dict[str, Any] = {}
-        if "vid" in request.params:
-            params["vid"] = int(request.params["vid"])
-        if "src" in request.params:
-            params["srcId"] = int(request.params["src"])
-        if "dst" in request.params:
-            params["dstId"] = int(request.params["dst"])
-        if "ts" in request.params:
-            params["ts"] = int(request.params["ts"])
+        for k, v in request.params.items():
+            params[k] = int(v) if k in _INT_KEYS and v is not None else v
 
         try:
             resp = await self._client.post(

@@ -55,10 +55,11 @@ REPETITIONS="${REPETITIONS:-3}" # int (always set; default 3 reps per scenario)
 # `WORKLOAD_SF[name]` overrides `SF` for that workload only.
 declare -A WORKLOAD_SF
 case "$SF" in
-    0.003|0.01)
-        # Smallest practical sizes: SNB family supports 0.003, FinBench 0.01.
-        WORKLOAD_SF[snb_iv2]=0.003
-        WORKLOAD_SF[snb_bi]=0.003
+    0.001|0.003|0.01)
+        # Smallest practical sizes: SNB family runs at 0.001 / 0.003,
+        # FinBench's datagen refuses anything below 0.01 so it is pinned.
+        WORKLOAD_SF[snb_iv2]="$SF"
+        WORKLOAD_SF[snb_bi]="$SF"
         WORKLOAD_SF[finbench]=0.01
         ;;
     *)

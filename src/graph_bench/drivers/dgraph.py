@@ -120,19 +120,87 @@ class DgraphDriver:
                 error_message=f"unknown query id {request.ref.id!r}",
             )
 
+        # Mutation templates start with `{` (set/delete blocks) or `upsert`.
+        # Read queries start with `query`. The two paths use different
+        # pydgraph APIs: bind-variable queries vs. client-substituted N-quad
+        # mutations.
+        is_mutation = dql.lstrip().startswith(("{", "upsert"))
+
         def _exec_sync() -> int:
-            txn = self._client.txn(read_only=True)
-            try:
-                resp = txn.query(dql, variables={"$vid": str(request.params.get("vid"))})
-                body = json.loads(resp.json)
-                # Count rows by walking the top-level "person" key (recursively
-                # unfolds to >0 if any).
-                rows = 0
-                if "person" in body:
-                    rows = len(body["person"])
-                return rows
-            finally:
-                txn.discard()
+            if is_mutation:
+                # Substitute $name placeholders client-side; pydgraph mutations
+                # do not accept bind variables.
+                body = dql
+                for k, v in request.params.items():
+                    body = body.replace(f"${k}", str(v))
+                txn = self._client.txn()
+                try:
+                    if body.lstrip().startswith("upsert"):
+                        # pydgraph requires the upsert's `query` and
+                        # `mutation` blocks to be passed as separate fields
+                        # on the Request, not as one big "upsert {...}"
+                        # string. Parse the two blocks out of the template.
+                        q_start = body.find("query")
+                        m_start = body.find("mutation")
+                        # Extract bracketed content of each block.
+                        def _extract_block(text: str, after: int) -> str:
+                            depth = 0
+                            start = -1
+                            for i in range(after, len(text)):
+                                ch = text[i]
+                                if ch == "{":
+                                    if start == -1:
+                                        start = i
+                                    depth += 1
+                                elif ch == "}":
+                                    depth -= 1
+                                    if depth == 0:
+                                        return text[start: i + 1]
+                            return ""
+                        q_block = _extract_block(body, q_start)
+                        m_block = _extract_block(body, m_start)
+                        # Strip the leading `set {` and trailing `}` from the
+                        # mutation block to get the bare N-quads.
+                        m_inner = m_block.strip().lstrip("{").rstrip("}").strip()
+                        if m_inner.startswith("set"):
+                            m_inner = m_inner[3:].strip().lstrip("{").rstrip("}").strip()
+                        mutation = pydgraph.Mutation(
+                            set_nquads=m_inner.encode("utf-8"), commit_now=True
+                        )
+                        req = pydgraph.Request(
+                            query=q_block, mutations=[mutation], commit_now=True
+                        )
+                        resp = txn.do_request(req)
+                    else:
+                        # Plain `{ set { ... } }` — extract the inner set block
+                        # and submit as N-quads. pydgraph requires bytes.
+                        inner = body.strip()
+                        if inner.startswith("{"):
+                            inner = inner[1:].rstrip().rstrip("}").strip()
+                        if inner.startswith("set"):
+                            inner = inner[3:].strip().lstrip("{").rstrip().rstrip("}").strip()
+                        mutation = pydgraph.Mutation(
+                            set_nquads=inner.encode("utf-8"), commit_now=True
+                        )
+                        resp = txn.do_request(
+                            pydgraph.Request(mutations=[mutation], commit_now=True)
+                        )
+                    return len(resp.uids) + 1
+                finally:
+                    txn.discard()
+            else:
+                # Read query — bind every workload param as a $-prefixed string.
+                # Dgraph's pydgraph requires every variable to be a string;
+                # the typed-variable declaration in the query header coerces.
+                variables = {f"${k}": str(v) for k, v in request.params.items()}
+                txn = self._client.txn(read_only=True)
+                try:
+                    resp = txn.query(dql, variables=variables)
+                    body = json.loads(resp.json)
+                    # Count rows in any top-level result key.
+                    return sum(len(v) for v in body.values() if isinstance(v, list))
+                finally:
+                    txn.discard()
 
         try:
             row_count = await asyncio.to_thread(_exec_sync)
@@ -174,7 +242,7 @@ class DgraphDriver:
                     "  }\n"
                     "}\n" % (src, dst)
                 )
-                req = pydgraph.txn_pb2.Request(
+                req = pydgraph.Request(
                     query=upsert, commit_now=True
                 )
                 resp = txn.do_request(req)
