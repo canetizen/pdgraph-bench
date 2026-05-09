@@ -200,17 +200,18 @@ class SnbInteractiveV2Workload:
     def _iter_from_dataset(self, seed: int) -> Iterator[QueryRequest]:
         pools = _build_dataset_params(self._dataset_dir, seed)
         cyclers = {ref: SeededParamCycler(rows, seed=seed + i) for i, (ref, rows) in enumerate(pools.items())}
-        # Fresh-id allocator for IU1/IU6 inserts. Namespaced by `seed` so
-        # concurrent workers (each with seed = base_seed + worker_id) write
-        # into disjoint id ranges. Monotonically increasing → never recycles
-        # → no _key collisions on ArangoDB and no silent overwrites on
-        # NebulaGraph. 1M ids per worker is well above any per-run insert
-        # demand at SF<=10.
+        # Fresh-id allocator for IU1/IU6 inserts. Per-worker base is a
+        # 56-bit random draw above max_existing, then a monotonic counter
+        # increments per call. The 56-bit space (~7.2e16) is large enough
+        # that even hundreds of (rep × phase × worker) bases pulled across
+        # a campaign collide with negligible probability. Within a worker
+        # the counter guarantees uniqueness.
         person_ids = _read_ids(self._dataset_dir, "dynamic/Person")
         post_ids = _read_ids(self._dataset_dir, "dynamic/Post")
         comment_ids = _read_ids(self._dataset_dir, "dynamic/Comment")
         max_existing = max([0, *person_ids, *post_ids, *comment_ids])
-        fresh_counter = [max_existing + 1 + (seed & 0xFFFF) * 1_000_000]
+        _fresh_rng = random.Random(seed ^ 0xC0FFEE)
+        fresh_counter = [max_existing + 1 + _fresh_rng.randrange(1 << 56)]
 
         def _next_fresh_id() -> int:
             v = fresh_counter[0]
