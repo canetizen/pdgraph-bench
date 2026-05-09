@@ -102,42 +102,27 @@ def _build_dataset_params(dataset_dir: Path, seed: int) -> dict[QueryRef, list[d
     if not first_names:
         first_names = ["Anon"]
 
-    # IU1 / IU6 are inserts of NEW vertices. If we sample IDs from the loaded
-    # set the insert collides with an existing vertex (NebulaGraph silently
-    # overwrites; ArangoDB returns HTTP 409 on the primary _key index;
-    # Dgraph upserts). Pick a fresh-id base above every observed id so the
-    # inserts always extend the graph rather than collide with it.
-    _max_existing = max([0, *person_ids, *post_ids, *comment_ids])
-    _fresh_base = _max_existing + 1
-    _new_id_counter = {"v": 0}
-
-    def _fresh_id() -> int:
-        _new_id_counter["v"] += 1
-        # Add per-call jitter so concurrent workers don't reuse the same id.
-        return _fresh_base + _new_id_counter["v"] * 16 + rng.randrange(0, 16)
-
-    # Refs whose params identify a NEW entity to insert (collide with loader
-    # if sampled from existing IDs).
-    _INSERT_REFS = {"IU1", "IU6"}
+    # IU1 / IU6 fresh IDs are NOT pre-baked into the pool — they are allocated
+    # at iter time by `_iter_from_dataset`, which knows the worker seed and
+    # can keep a monotonically increasing counter that never recycles. Pre-
+    # baking would cap us at 500 unique fresh IDs per worker; once consumed
+    # the cycler would re-emit them and ArangoDB would 409 on every IU.
 
     pools: dict[QueryRef, list[dict[str, Any]]] = {}
     for ref in _IS_REFS + _IC_REFS + _IU_REFS:
         spec = _DATASET_PARAM_SPEC.get(ref.id, ("personId",))
-        is_insert = ref.id in _INSERT_REFS
         pool: list[dict[str, Any]] = []
         for _ in range(min(500, len(person_ids))):
             row: dict[str, Any] = {}
             for key in spec:
                 if key == "personId":
-                    row[key] = _fresh_id() if is_insert else rng.choice(person_ids)
+                    row[key] = rng.choice(person_ids)
                 elif key == "messageId":
                     row[key] = rng.choice(message_ids)
                 elif key == "postId":
                     row[key] = rng.choice(post_ids) if post_ids else rng.choice(person_ids)
                 elif key == "commentId":
-                    row[key] = _fresh_id() if is_insert else (
-                        rng.choice(comment_ids) if comment_ids else rng.choice(person_ids)
-                    )
+                    row[key] = rng.choice(comment_ids) if comment_ids else rng.choice(person_ids)
                 elif key == "firstName":
                     row[key] = rng.choice(first_names)
                 elif key == "lastName":
@@ -215,12 +200,34 @@ class SnbInteractiveV2Workload:
     def _iter_from_dataset(self, seed: int) -> Iterator[QueryRequest]:
         pools = _build_dataset_params(self._dataset_dir, seed)
         cyclers = {ref: SeededParamCycler(rows, seed=seed + i) for i, (ref, rows) in enumerate(pools.items())}
+        # Fresh-id allocator for IU1/IU6 inserts. Namespaced by `seed` so
+        # concurrent workers (each with seed = base_seed + worker_id) write
+        # into disjoint id ranges. Monotonically increasing → never recycles
+        # → no _key collisions on ArangoDB and no silent overwrites on
+        # NebulaGraph. 1M ids per worker is well above any per-run insert
+        # demand at SF<=10.
+        person_ids = _read_ids(self._dataset_dir, "dynamic/Person")
+        post_ids = _read_ids(self._dataset_dir, "dynamic/Post")
+        comment_ids = _read_ids(self._dataset_dir, "dynamic/Comment")
+        max_existing = max([0, *person_ids, *post_ids, *comment_ids])
+        fresh_counter = [max_existing + 1 + (seed & 0xFFFF) * 1_000_000]
+
+        def _next_fresh_id() -> int:
+            v = fresh_counter[0]
+            fresh_counter[0] += 1
+            return v
+
         rng = random.Random(seed)
         refs = list(cyclers.keys())
         weights = [self.mix.weights[r] for r in refs]
         while True:
             ref = rng.choices(refs, weights=weights, k=1)[0]
-            yield QueryRequest(ref=ref, params=next(cyclers[ref]))
+            params = dict(next(cyclers[ref]))  # copy: we mutate IU1/IU6 ids below
+            if ref.id == "IU1":
+                params["personId"] = _next_fresh_id()
+            elif ref.id == "IU6":
+                params["commentId"] = _next_fresh_id()
+            yield QueryRequest(ref=ref, params=params)
 
 
 def _factory(config: dict[str, Any]) -> SnbInteractiveV2Workload:
