@@ -130,6 +130,10 @@ def dgraph_schema() -> str:
                 lines.append(f"{p.name}: {t} @index({t}) .")
             elif t == "string" and p.name in {"firstName", "lastName", "name"}:
                 lines.append(f"{p.name}: {t} @index(exact, term) .")
+            elif p.name == "length":
+                # SNB BI Q1 filters Posts by length >= N; Dgraph rejects
+                # `eq(length, ...)` etc. without an index on the predicate.
+                lines.append(f"{p.name}: {t} @index({t}) .")
             else:
                 lines.append(f"{p.name}: {t} .")
     if "id" not in seen:

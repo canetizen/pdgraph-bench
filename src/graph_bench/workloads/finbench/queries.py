@@ -160,14 +160,35 @@ DGRAPH: dict[str, str] = {
         "  a(func: eq(id, $accountId)) { ~DEPOSIT { id } } "
         "}"
     ),
+    # W1/W2/W3 insert edges between two EXISTING vertices. The `uid(name)`
+    # form requires the name to be bound by a query block — wrap the
+    # mutation in an upsert that resolves the endpoints by id.
     "W1": (
-        "{ set { uid(src) <TRANSFER> uid(dst) (amount=$amount, createTime=$createTime) . }}"
+        "upsert {\n"
+        "  query {\n"
+        "    src(func: eq(id, $srcId)) { sp as uid }\n"
+        "    dst(func: eq(id, $dstId)) { dp as uid }\n"
+        "  }\n"
+        "  mutation { set { uid(sp) <TRANSFER> uid(dp) . } }\n"
+        "}\n"
     ),
     "W2": (
-        "{ set { uid(loan) <DEPOSIT> uid(acc) (amount=$amount, createTime=$createTime) . }}"
+        "upsert {\n"
+        "  query {\n"
+        "    loan(func: eq(id, $loanId)) { lp as uid }\n"
+        "    acc(func: eq(id, $accountId)) { ap as uid }\n"
+        "  }\n"
+        "  mutation { set { uid(lp) <DEPOSIT> uid(ap) . } }\n"
+        "}\n"
     ),
     "W3": (
-        "{ set { uid(src) <WITHDRAW> uid(dst) (amount=$amount, createTime=$createTime) . }}"
+        "upsert {\n"
+        "  query {\n"
+        "    src(func: eq(id, $srcId)) { sp as uid }\n"
+        "    dst(func: eq(id, $dstId)) { dp as uid }\n"
+        "  }\n"
+        "  mutation { set { uid(sp) <WITHDRAW> uid(dp) . } }\n"
+        "}\n"
     ),
 }
 

@@ -66,10 +66,17 @@ def _orientdb_service(node: NodeInfo, offset: int) -> ServiceSpec:
             # offsets keep the ports unique on a co-located host.
             "ORIENTDB_NETWORK_BINARY_PORT": str(binary_port),
             "ORIENTDB_NETWORK_HTTP_PORT": str(http_port),
-            "ORIENTDB_DISTRIBUTED": "true",
+            # Hazelcast distributed mode triggered ORecordDuplicatedException
+            # on every vertex batch insert (RID cluster collisions across
+            # peers). Tier-2 OrientDB only runs S1 in this benchmark so we
+            # do not need replication; run as standalone on each node.
+            # The loader/driver target node2 by default; the other nodes'
+            # standalone instances sit idle but wasted memory < debug time.
+            "ORIENTDB_DISTRIBUTED": "false",
         },
-        # Override default `server.sh` with the distributed entrypoint.
-        entrypoint=("/orientdb/bin/dserver.sh",),
+        # `server.sh` is the standalone entrypoint; `dserver.sh` would
+        # bring up Hazelcast clustering which we explicitly do not want.
+        entrypoint=("/orientdb/bin/server.sh",),
         # NOTE: do NOT mount /orientdb/config — the image's default config
         # (orientdb-server-config.xml + hazelcast.xml) lives there and a host
         # bind mount would shadow it, leaving the HTTP listener undefined.
