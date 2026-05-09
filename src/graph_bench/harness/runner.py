@@ -116,9 +116,18 @@ class ScenarioRunner:
 
             seed = _derive_seed(ctx.driver.name, ctx.spec.id, ctx.repetition)
 
+            # Warmup and measurement get different seeds. Otherwise workloads
+            # that mint deterministic fresh IDs (e.g. snb_iv2's IU1/IU6
+            # inserts) reuse the same IDs across phases — warmup successfully
+            # inserts them, measurement collides on every retry. XOR'ing
+            # with two distinct constants gives the workload a clean
+            # namespace per phase while keeping the run reproducible.
+            warmup_seed = seed ^ 0xA5A5A5A5
+            measurement_seed = seed ^ 0x5A5A5A5A
+
             collector.events.emit("phase", name="warmup", duration_s=ctx.spec.warmup.total_seconds())
             await self._run_queries(
-                ctx, collector, seed, ctx.spec.warmup.total_seconds(), record=False
+                ctx, collector, warmup_seed, ctx.spec.warmup.total_seconds(), record=False
             )
             collector.events.emit("warmup_end")
 
@@ -130,7 +139,7 @@ class ScenarioRunner:
             await collector.start_measurement()
             try:
                 await self._run_queries(
-                    ctx, collector, seed, ctx.spec.measurement.total_seconds(), record=True
+                    ctx, collector, measurement_seed, ctx.spec.measurement.total_seconds(), record=True
                 )
             finally:
                 await collector.stop_measurement()
