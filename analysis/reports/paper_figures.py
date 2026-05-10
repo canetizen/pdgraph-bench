@@ -436,6 +436,92 @@ def _write_summary(overall: pd.DataFrame, df: pd.DataFrame, out: Path) -> None:
     (out.parent / "results_summary.md").write_text("\n".join(lines))
 
 
+# ------------------------------------------------------------ S3 interference
+
+# S3 scenario weights from configs/scenarios/s3.yaml — ratio 70/20/10
+# across IS / IC / IU classes. Normalised below.
+_S3_WEIGHTS_RAW: dict[str, float] = {
+    "snb_iv2:IS1": 10.0, "snb_iv2:IS2": 10.0, "snb_iv2:IS3": 10.0,
+    "snb_iv2:IS4": 10.0, "snb_iv2:IS5": 10.0, "snb_iv2:IS6": 10.0,
+    "snb_iv2:IS7": 10.0,
+    "snb_iv2:IC1":  5.0, "snb_iv2:IC3":  5.0, "snb_iv2:IC5":  5.0,
+    "snb_iv2:IC6":  5.0,
+    "snb_iv2:IU1":  3.33, "snb_iv2:IU2": 3.33, "snb_iv2:IU6": 3.34,
+}
+
+
+def _compute_interference(overall: pd.DataFrame) -> pd.DataFrame:
+    """Per-Tier-1 mixed-workload interference index for S3.
+
+    The Progress Report defines $I = 1 - T_{\\mathrm{mixed}} /
+    \\sum_c w_c T^{\\mathrm{iso}}_c$. We approximate the per-class
+    isolated throughput by the *aggregate* throughput of the scenario
+    that runs the corresponding workload class family in isolation:
+    $T^{\\mathrm{iso}}_{IS,IU} \\approx T_{S1}$ (transactional-only)
+    and $T^{\\mathrm{iso}}_{IC} \\approx T_{S2}$ (analytical-only).
+    The S3 mix weights collapse to a 80/20 split between these two
+    baselines (70\\% IS + 10\\% IU = 80\\% transactional;
+    20\\% IC analytical), giving:
+
+        weighted_iso = 0.8 * T_S1 + 0.2 * T_S2
+        I = 1 - T_S3 / weighted_iso
+
+    A positive $I$ indicates the mixed regime under-performs the
+    weighted-average of isolation baselines (true interference);
+    a small negative value reflects the mix benefiting from cache
+    reuse or buffer effects.
+    """
+    rows: list[dict] = []
+    pivot = (overall.pivot(index="system", columns="scenario",
+                           values="ops_mean")
+             .reindex(["nebulagraph", "arangodb", "dgraph"]))
+    for sut, row in pivot.iterrows():
+        t_s1, t_s2, t_s3 = row.get("s1"), row.get("s2"), row.get("s3")
+        if pd.isna(t_s1) or pd.isna(t_s2) or pd.isna(t_s3):
+            continue
+        weighted_iso = 0.8 * t_s1 + 0.2 * t_s2
+        i_score = 1.0 - (t_s3 / weighted_iso) if weighted_iso > 0 else float("nan")
+        rows.append({
+            "system": sut,
+            "T_S1_ops_per_s": round(t_s1, 1),
+            "T_S2_ops_per_s": round(t_s2, 1),
+            "T_S3_ops_per_s": round(t_s3, 1),
+            "weighted_isolated_ops_per_s": round(weighted_iso, 1),
+            "interference_index": round(i_score, 3),
+        })
+    return pd.DataFrame(rows)
+
+
+def _table_interference(intf: pd.DataFrame, out: Path) -> None:
+    rows: list[list[str]] = []
+    for _, r in intf.iterrows():
+        rows.append([
+            _SUT_LABEL[r["system"]],
+            f"{r['T_S1_ops_per_s']:.1f}",
+            f"{r['T_S2_ops_per_s']:.1f}",
+            f"{r['T_S3_ops_per_s']:.1f}",
+            f"{r['weighted_isolated_ops_per_s']:.1f}",
+            f"{r['interference_index']:+.3f}",
+        ])
+    tex = _emit_table(
+        rows,
+        header=["System", "$T_{S1}$", "$T_{S2}$", "$T_{S3}$",
+                "$0.8 T_{S1}{+}0.2 T_{S2}$", "$I$"],
+        col_format="lrrrrr",
+        caption=("Mixed-workload interference index for S3 (Tier-1 only). "
+                 "$T^{\\mathrm{iso}}_{IS,IU} \\approx T_{S1}$ and "
+                 "$T^{\\mathrm{iso}}_{IC} \\approx T_{S2}$ collapse the "
+                 "S3 mix's 70\\,\\%~IS+10\\,\\%~IU=80\\,\\% transactional "
+                 "and 20\\,\\% IC analytical to "
+                 "$T^{\\mathrm{iso}} = 0.8 T_{S1} + 0.2 T_{S2}$. "
+                 "$I = 1 - T_{S3}/T^{\\mathrm{iso}}$; positive values "
+                 "denote real interference, small negative values "
+                 "reflect mix-favourable cache or scheduling effects."),
+        label="tab:interference",
+    )
+    (out / "table_interference.tex").write_text(tex)
+
+
 # ------------------------------------------------------------ S5 scale-out
 
 def _s5_scaleout_metrics(scaleout_glob: str) -> pd.DataFrame:
@@ -599,6 +685,10 @@ def main(argv: list[str] | None = None) -> int:
 
     _table_overall(overall, tbl_dir)
     _table_per_class_s1(per_class, tbl_dir)
+
+    intf = _compute_interference(overall)
+    intf.to_csv(out_root / "summary_interference.csv", index=False)
+    _table_interference(intf, tbl_dir)
 
     if args.scaleout_runs:
         s5_metrics = _s5_scaleout_metrics(args.scaleout_runs)
