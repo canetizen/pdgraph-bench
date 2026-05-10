@@ -85,7 +85,7 @@ def main(argv: list[str] | None = None) -> int:
         n = 0
         for chunk in batched(iter_vertex_rows(v, layout), args.batch):
             docs = [{"_key": str(vid), **props} for vid, props in chunk]
-            coll.import_bulk(docs, on_duplicate="error")
+            coll.import_bulk(docs, on_duplicate="replace")
             n += len(docs)
         if n:
             print(f"[loader]   vertex {v.name}: {n}")
@@ -105,7 +105,7 @@ def main(argv: list[str] | None = None) -> int:
                     {"_from": f"{src_label}/{src}", "_to": f"{dst_label}/{dst}"}
                     for src, dst, _ in chunk
                 ]
-                coll.import_bulk(docs, on_duplicate="error")
+                coll.import_bulk(docs, on_duplicate="replace")
                 n += len(docs)
             if n:
                 print(f"[loader]   edge   {fk.edge_label}: {n}  (FK {v.name}.{fk.column})")
@@ -119,7 +119,7 @@ def main(argv: list[str] | None = None) -> int:
                 {"_from": f"{e.src_label}/{src}", "_to": f"{e.dst_label}/{dst}", **props}
                 for src, dst, props in chunk
             ]
-            coll.import_bulk(docs, on_duplicate="error")
+            coll.import_bulk(docs, on_duplicate="replace")
             n += len(docs)
         if n:
             print(f"[loader]   edge   {e.name}: {n}")
