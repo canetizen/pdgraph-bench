@@ -38,6 +38,7 @@ results/*
 !results/.gitkeep
 results-*/
 results-*-stdout.log
+results-*.tar.gz
 
 # Generated datasets — regenerate from datagen
 data/generated/

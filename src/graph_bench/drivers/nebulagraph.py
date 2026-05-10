@@ -217,6 +217,13 @@ class NebulaGraphDriver:
 
         ok, err = await asyncio.to_thread(_add_sync)
         if not ok:
+            # `Existed!` means this host is already registered with the
+            # metad (a previous rep within the same NebulaGraph bring-up
+            # already executed ADD HOSTS). Semantically a successful
+            # no-op — return so subsequent reps record a clean
+            # scale_out_complete event rather than failing the run.
+            if "existed" in err.lower():
+                return
             raise RuntimeError(f"ADD HOSTS failed: {err}")
 
 

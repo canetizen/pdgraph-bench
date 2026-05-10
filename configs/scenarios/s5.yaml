@@ -27,6 +27,9 @@ mix:
   IU2: 3.33
   IU6: 3.34
 scale_out:
-  at_offset_seconds: 300            # 5 min into measurement
+  at_offset_seconds: 10             # fire shortly into the measurement window
+                                    # so the event lands inside the minimum-
+                                    # viable run length (was 300 s when the
+                                    # planned measurement was 1200 s)
   target_node: node5
   role: storaged                    # overridden per-system (dbserver/alpha/...)

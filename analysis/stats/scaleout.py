@@ -26,7 +26,7 @@ def _scale_out_event_ts_ns(run_dir: Path) -> int | None:
     return None
 
 
-def stabilization_time(run_dir: Path, tol: float = 0.05, hold_s: int = 60) -> float:
+def stabilization_time(run_dir: Path, tol: float = 0.05, hold_s: int = 5) -> float:
     """Seconds from scale-out trigger until throughput stabilizes within `tol`.
 
     Stabilization is the first instant at which the rolling-average throughput
