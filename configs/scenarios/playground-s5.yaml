@@ -1,0 +1,39 @@
+# Created by: Mustafa Can Caliskan
+# Date: 2026-04-25
+#
+# Playground variant of S5 (mixed + scale-out). Same shape as s5.yaml; durations
+# are shrunk so a single repetition finishes in a couple of minutes against the
+# single-host playground inventory. The scale-out target is the logical reserve
+# node `node5` — the deployer-driven provisioner brings up its storaged on the
+# inventory's hostname (localhost in playground, the real reserve host in
+# production) using the same code path.
+
+id: playground-s5
+name: Mixed + scale-out (playground)
+workload: snb_iv2
+dataset: snb_iv2_sf0.003
+system: nebulagraph
+worker_count: 4
+warmup_seconds: 10
+measurement_seconds: 60
+query_timeout_seconds: 30
+repetitions: 1
+mix:
+  IS1: 10.0
+  IS2: 10.0
+  IS3: 10.0
+  IS4: 10.0
+  IS5: 10.0
+  IS6: 10.0
+  IS7: 10.0
+  IC1: 5.0
+  IC3: 5.0
+  IC5: 5.0
+  IC6: 5.0
+  IU1: 3.33
+  IU2: 3.33
+  IU6: 3.34
+scale_out:
+  at_offset_seconds: 20
+  target_node: node5
+  role: storaged

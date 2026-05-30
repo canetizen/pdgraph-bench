@@ -1,0 +1,16 @@
+# Created by: Mustafa Can Caliskan
+# Date: 2026-04-25
+
+name: finbench
+queries:
+  - SR1
+  - SR2
+  - SR3
+  - SR4
+  - SR5
+  - SR6
+  - W1
+  - W2
+  - W3
+parameter_source: data/generated/finbench_sf1/parameters/
+options: {}

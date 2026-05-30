@@ -1,0 +1,26 @@
+# Created by: Mustafa Can Caliskan
+# Date: 2026-04-25
+#
+# Playground variant of snb_iv2: parameters are derived in-process from the
+# loaded vertex CSVs (no LDBC parameter-curation pass required). Production
+# runs use snb_iv2.yaml with parameter_source pointing at the curated output.
+
+name: snb_iv2
+queries:
+  - IS1
+  - IS2
+  - IS3
+  - IS4
+  - IS5
+  - IS6
+  - IS7
+  - IC1
+  - IC3
+  - IC5
+  - IC6
+  - IU1
+  - IU2
+  - IU6
+parameter_source: data/generated/snb_iv2_sf0.003/
+options:
+  dataset_dir: data/generated/snb_iv2_sf0.003/

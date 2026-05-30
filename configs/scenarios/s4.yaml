@@ -1,0 +1,23 @@
+# Created by: Mustafa Can Caliskan
+# Date: 2026-04-25
+
+id: s4
+name: FinBench transactional
+workload: finbench
+dataset: finbench_sf1
+system: nebulagraph
+worker_count: 16
+warmup_seconds: 300
+measurement_seconds: 900
+query_timeout_seconds: 60
+repetitions: 3
+mix:
+  SR1: 1.0
+  SR2: 1.0
+  SR3: 1.0
+  SR4: 1.0
+  SR5: 1.0
+  SR6: 1.0
+  W1: 1.0
+  W2: 1.0
+  W3: 1.0
